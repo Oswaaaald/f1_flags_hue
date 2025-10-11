@@ -23,3 +23,8 @@ Calibrez votre TV avec les drapeaux F1 :
 ```bash
 make sync-calibrate
 ```
+
+Testez hors GP avec un test :
+```bash
+make quick GAP=5
+```
