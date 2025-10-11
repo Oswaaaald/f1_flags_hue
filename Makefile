@@ -18,6 +18,10 @@ MOCK_SPEED    ?= 1.0
 MOCK_PIDFILE  ?= .mock.pid
 GAP           ?= 1.0
 
+export LANG = C.UTF-8
+export LC_ALL = C.UTF-8
+export PYTHONIOENCODING = UTF-8
+
 .PHONY: help install init-config run-live test quick \
         setup-wizard setup-link setup-lights setup-groups \
         baseline-capture baseline-restore baseline-print \
