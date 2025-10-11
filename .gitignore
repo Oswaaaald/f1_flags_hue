@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Environnements (même si tu n'en veux pas)
+.venv/
+venv/
+.env
+
+# Données locales (NE PAS publier)
+config.yml
+baseline.json
+
+# Logs / divers
+*.log
+
+# macOS
+.DS_Store
+
+mock.log
+.mock.pid

@@ -1,0 +1,28 @@
+events:
+  - offset: 0
+    category: Flag
+    flag: GREEN
+    message: "GREEN FLAG"
+
+  - offset: 20
+    category: Flag
+    flag: YELLOW
+    message: "YELLOW FLAG"
+
+  - offset: 25
+    category: SafetyCar
+    message: "VIRTUAL SAFETY CAR DEPLOYED"
+
+  - offset: 45
+    category: SafetyCar
+    message: "VIRTUAL SAFETY CAR ENDING"
+
+  - offset: 55
+    category: Flag
+    flag: GREEN
+    message: "GREEN FLAG"
+
+  - offset: 80
+    category: Flag
+    flag: CHEQUERED
+    message: "CHEQUERED FLAG"

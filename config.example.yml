@@ -1,0 +1,93 @@
+bridge_ip:
+username:
+group_id:
+group_ids: []
+light_ids: []
+bri: 254
+transition_tenths: 5
+off_transition_tenths: 5
+source: openf1-rest
+openf1:
+  base_url: "https://api.openf1.org/v1"
+  poll_seconds: 1.0
+flags:
+  seek_live: true
+  ignore_blue: true
+  exit_on_chequered: false
+behavior:
+  blink_method: alert
+  alert_watchdog_seconds: 600
+baseline:
+  capture_on_start: true
+  restore_on_idle: true
+  restore_on_exit: true
+  fade_tenths: 5
+  delay_after_off_s: 0.05
+  persist_path: baseline.json
+colors_xy:
+  green:
+  - 0.17
+  - 0.7
+  yellow:
+  - 0.545
+  - 0.455
+  red:
+  - 0.675
+  - 0.322
+  white:
+  - 0.3227
+  - 0.329
+  blue:
+  - 0.15
+  - 0.06
+patterns:
+  GREEN:
+    mode: solid
+    color: green
+    bri_override: 254
+    hold: 8.0
+    then_off: true
+  YELLOW:
+    mode: solid
+    color: yellow
+    bri_override: 254
+  RED:
+    mode: solid
+    color: red
+    bri_override: 254
+  VSC:
+    mode: blink
+    color: yellow
+    bri_override: 254
+    alert_mode: lselect
+    duration: 0
+  SC:
+    mode: blink
+    color: yellow
+    bri_override: 254
+    alert_mode: lselect
+    duration: 0
+  VSC_ENDING:
+    mode: solid
+    color: yellow
+    bri_override: 254
+    hold: 15.0
+  SC_ENDING:
+    mode: solid
+    color: yellow
+    bri_override: 254
+    hold: 20.0
+  CHEQUERED:
+    mode: blink
+    color: white
+    bri_override: 254
+    transition_tenths: 0
+    alert_mode: lselect
+    duration: 10.0
+  BLUE:
+    mode: blink
+    color: blue
+    bri_override: 200
+    alert_mode: select
+    select_repeats: 3
+    select_gap: 0.7
