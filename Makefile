@@ -27,7 +27,7 @@ export PYTHONIOENCODING = UTF-8
         baseline-capture baseline-restore baseline-print \
         sync-calibrate sync-show \
         mock-start mock-stop mock-restart \
-        doctor
+        doctor web web-run
 
 help:
 	@echo ""
@@ -86,6 +86,16 @@ test:
 quick:
 	@echo "==> Démo rapide (gap=$(GAP)s)"
 	@$(PY) $(APP) test --quick --gap $(GAP)
+
+# --- Web UI --------------------------------------------------------------
+
+web:
+	@echo "==> Web UI (http://localhost:8080)"
+	@$(PY) web/server.py
+
+web-run:
+	@echo "==> Web UI (http://localhost:8080)"
+	@PYTHONPATH=. $(PY) web/server.py
 
 # ---- SETUP -------------------------------------------------------------------
 

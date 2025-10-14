@@ -13,9 +13,12 @@ class F1SourceOpenF1REST:
     def _dt(s: str) -> datetime: return datetime.fromisoformat(s.replace("Z","+00:00"))
 
     def _fetch(self) -> list[dict]:
-        r = self.session.get(f"{self.base}/race_control",
-                             params={"meeting_key":"latest","session_key":"latest"},
-                             headers=self.headers, timeout=6)
+        r = self.session.get(
+            f"{self.base}/race_control",
+            params={"meeting_key":"latest","session_key":"latest"},
+            headers=self.headers,
+            timeout=(0.8, 1.2)  # connect, read
+        )
         r.raise_for_status(); return r.json() if "application/json" in r.headers.get("Content-Type","") else []
 
     def events(self):
@@ -29,7 +32,14 @@ class F1SourceOpenF1REST:
                     try:
                         latest = max(self._dt(r["date"]) for r in rows if r.get("date"))
                         self._last_dt = latest; self._initialized = True
-                        if self.stop_evt.wait(self.poll): break
+                        # attente granulaire
+                        remaining = float(self.poll)
+                        step = 0.05
+                        while remaining > 0 and not self.stop_evt.is_set():
+                            t = step if remaining > step else remaining
+                            if self.stop_evt.wait(t): break
+                            remaining -= t
+                        if self.stop_evt.is_set(): break
                         continue
                     except Exception:
                         self._initialized = True
@@ -62,10 +72,25 @@ class F1SourceOpenF1REST:
                     if out and out != self._last_emitted:
                         self._last_emitted = out; yield out
 
-                if self.stop_evt.wait(self.poll): break
+                # attente granulaire
+                remaining = float(self.poll)
+                step = 0.05
+                while remaining > 0 and not self.stop_evt.is_set():
+                    t = step if remaining > step else remaining
+                    if self.stop_evt.wait(t): break
+                    remaining -= t
+                if self.stop_evt.is_set(): break
             except Exception as e:
                 print(f"[WARN] OpenF1 REST: {e}")
-                if self.stop_evt.wait(max(2.0, self.poll)): break
+                # backoff granulaire
+                backoff = max(2.0, float(self.poll))
+                remaining = backoff
+                step = 0.05
+                while remaining > 0 and not self.stop_evt.is_set():
+                    t = step if remaining > step else remaining
+                    if self.stop_evt.wait(t): break
+                    remaining -= t
+                if self.stop_evt.is_set(): break
 
 class F1SourceMock:
     def __init__(self, sequence: list[str], gap: float, stop_evt: threading.Event):

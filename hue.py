@@ -7,6 +7,12 @@ class HueBridge:
         self.session.mount("http://",
             requests.adapters.HTTPAdapter(pool_connections=8, pool_maxsize=16, max_retries=1))
 
+    def close(self):
+        try:
+            self.session.close()
+        except Exception:
+            pass
+
     def register(self, devicetype="f1-hue#raspi") -> str:
         r = self.session.post(self.base, json={"devicetype": devicetype}, timeout=self.timeout); r.raise_for_status()
         resp = r.json()
