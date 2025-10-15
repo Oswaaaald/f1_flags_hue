@@ -18,19 +18,30 @@
   <section class="card">
     <h2>Setup (Bridge)</h2>
 
-    <div class="row wrap">
-      <label class="w120">Bridge IP</label>
-      <input id="bridgeIp" class="input" placeholder="192.168.x.x" />
-      <button id="linkBtn" class="btn">Lier Hue Bridge</button>
+    <div class="row">
       <span id="bridgeStatus" class="bridge-status not-connected">Statut : non connecté</span>
     </div>
     <div class="row">
-      <span id="bridgeHint" class="hint">Appuyer sur le bouton du Hue Bridge puis cliquer sur « Lier ».</span>
+      <span id="bridgeHint" class="hint">
+        Cliquez un bridge détecté ci-dessous puis appuyez sur le bouton physique du Hue Bridge.
+      </span>
     </div>
 
-    <div class="row">
-      <label class="w120">Username</label>
-      <code id="bridgeUser" class="code">—</code>
+    <!-- Bridge LIÉ (une seule carte) -->
+    <div id="linkedBridgePanel" class="bridges-panel hidden">
+      <div class="bridges-header">
+        <div class="muted">Bridge lié</div>
+      </div>
+      <div id="linkedBridgeCard" class="grid-bridges"></div>
+    </div>
+
+    <!-- Grille des bridges détectés -->
+    <div id="bridgesPanel" class="bridges-panel">
+      <div class="bridges-header">
+        <div class="muted">Bridges détectés sur le réseau</div>
+        <button id="refreshBridges" class="btn ghost">Rafraîchir</button>
+      </div>
+      <div id="gridBridges" class="grid-bridges"></div>
     </div>
   </section>
 

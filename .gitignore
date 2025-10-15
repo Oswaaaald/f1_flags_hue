@@ -21,3 +21,5 @@ baseline.json
 
 mock.log
 .mock.pid
+
+data/bridges_cache.json

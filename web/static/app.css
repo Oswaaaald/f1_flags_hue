@@ -201,5 +201,38 @@ h1{ margin:0; font-size:22px; }
 /* hint */
 .hint{ color: var(--muted); font-size:13px }
 
+/* Bridges discovery panel */
+.bridges-panel{ margin-top:8px; background:#0c141e; border:1px dashed var(--border); padding:12px; border-radius:12px }
+.bridges-header{ display:flex; justify-content:space-between; align-items:center; margin-bottom:8px }
+.grid-bridges{
+  display:grid;
+  grid-template-columns: repeat( auto-fill, minmax(220px, 1fr) );
+  gap:12px;
+}
+.bridge-card{
+  border:1px solid var(--border); background:#0c141e; border-radius:14px; padding:12px;
+  display:flex; flex-direction:column; gap:8px;
+  transition: border-color .15s ease, box-shadow .15s ease, opacity .15s ease;
+}
+.bridge-card.clickable{ cursor:pointer }
+.bridge-card:hover{ border-color:#295386; box-shadow:0 4px 14px rgba(0,0,0,.25) }
+.bridge-card.busy{ opacity:.8; pointer-events:none }
+.bridge-card .title{ font-weight:700 }
+.bridge-card .meta{ color:#9db0c3; font-size:13px }
+.bridge-link-msg{ font-size:13px }
+
+/* run status (déjà présent plus haut, rappel au cas où) */
+.run-status{ font-weight:600; min-width:160px; }
+.run-status.idle{ color:var(--muted) }
+.run-status.pending{ color:#e7edf4 }
+.run-status.live{ color:var(--ok) }
+.run-status.test{ color:var(--ok) }
+.run-status.stopping{ color:var(--danger) }
+
+/* bridge link status */
+.bridge-status{ font-weight:600; }
+.bridge-status.connected{ color:var(--ok); }
+.bridge-status.not-connected{ color:var(--text); }
+
 /* utilitaire */
 .hidden{ display:none }
