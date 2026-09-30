@@ -12,6 +12,7 @@ venv/
 # Données locales (NE PAS publier)
 config.yml
 baseline.json
+.data/
 
 # Logs / divers
 *.log

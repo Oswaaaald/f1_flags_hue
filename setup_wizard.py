@@ -56,7 +56,7 @@ def ensure_hue_credentials(conf: dict, stop_evt: threading.Event) -> dict:
             try:
                 username = bridge.register(devicetype="f1-hue#raspi")
                 conf["username"] = username; save_conf(conf)
-                print(f"✅ Username créé et sauvegardé: {username}")
+                print("✅ Clé locale Hue créée et sauvegardée.")
                 break
             except Exception:
                 now = time.monotonic()

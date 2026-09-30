@@ -26,7 +26,7 @@ class LightEngine:
             gid = self.conf.get("_sync_group_id", None)
         if gid is not None:
             return (None, gid)
-        return (self.conf.get("light_ids") or None, None)
+        return (self.conf.get("_resolved_light_ids") or self.conf.get("light_ids") or None, None)
 
     def start(self):
         if not self.thread.is_alive(): self.thread.start()

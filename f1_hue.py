@@ -2,12 +2,19 @@
 # -*- coding: utf-8 -*-
 
 import argparse, json, signal, threading, time
+import requests
 from config import ensure_conf, save_conf, APP_DIR
-from hue import HueBridge
+from hue import HueBridge, HueBridgeConnectionError, connect_bridge
 from engine import LightEngine
 from setup_wizard import ensure_devices_selected, ensure_hue_credentials
-from f1_sources import F1SourceOpenF1REST, F1SourceMock
+from f1_sources import F1SourceFormula1Live
 from baseline import BaselineStore
+from effects import EffectRules, play_effects, replay_events
+from event_journal import EventJournal
+from historical_replay import SCENARIOS, SCENARIOS_BY_ID, historical_events
+from hue_targets import prepare_sync_group
+from live_events import LiveEvent
+from live_service import LiveTimingService
 
 # --- Normalisation des noms de drapeaux ----
 def normalize_flag(name: str) -> str:
@@ -22,50 +29,6 @@ def normalize_flag(name: str) -> str:
     }
     return map_.get(upper, upper)
 
-def _ensure_sync_group_if_needed(conf: dict, bridge: HueBridge):
-    """
-    Si l'utilisateur a:
-      - group_id -> on l'utilise tel quel (pas de sync group)
-      - group_ids -> on crée/MAJ un LightGroup = union des lampes
-      - light_ids -> on crée/MAJ un LightGroup avec ces lampes
-    """
-    # si un group_id explicite est fourni, priorité à celui-ci
-    if conf.get("group_id", None) is not None:
-        conf.pop("_sync_group_id", None)
-        return
-
-    # union des lampes depuis group_ids ?
-    gids = conf.get("group_ids") or []
-    if gids:
-        try:
-            groups = bridge.groups()
-            # union des lampes de chaque group_id
-            if 0 in gids:
-                lids = sorted(int(k) for k in bridge.lights().keys())
-            else:
-                acc: set[int] = set()
-                for g in gids:
-                    gl = groups.get(str(int(g)), {}).get("lights", [])
-                    for lid in gl:
-                        acc.add(int(lid))
-                lids = sorted(acc)
-            if lids and hasattr(bridge, "ensure_lightgroup"):
-                gid = bridge.ensure_lightgroup("F1 Hue (sync)", lids)
-                if gid is not None:
-                    conf["_sync_group_id"] = gid
-                    print(f"[SYNC] Groupe LightGroup pour multi-zones: id={gid} (lampes={len(lids)})")
-            return
-        except Exception:
-            return
-
-    # sinon, light_ids ?
-    lids = conf.get("light_ids") or []
-    if lids and hasattr(bridge, "ensure_lightgroup"):
-        gid = bridge.ensure_lightgroup("F1 Hue (sync)", lids)
-        if gid is not None:
-            conf["_sync_group_id"] = gid
-            print(f"[SYNC] Groupe LightGroup créé/à jour: id={gid} (pour synchro parfaite)")
-
 def _restore_on_exit(bridge: HueBridge, conf: dict, baseline: BaselineStore):
     """Restaure la baseline si activée (utilisé après Ctrl+C / fin propre)."""
     try:
@@ -79,49 +42,44 @@ def _restore_on_exit(bridge: HueBridge, conf: dict, baseline: BaselineStore):
         print(f"[EXIT] Impossible de restaurer la baseline: {e}")
 
 def run_live(conf: dict, stop_evt: threading.Event):
-    conf = ensure_devices_selected(conf, stop_evt)
-    bridge = HueBridge(conf["bridge_ip"], conf["username"])
-    _ensure_sync_group_if_needed(conf, bridge)
-
-    baseline = BaselineStore(APP_DIR, conf)
-    if conf.get("baseline", {}).get("capture_on_start", True):
-        n = baseline.capture(bridge, conf)
-        print(f"[BASELINE] Capturée au démarrage ({n} lampes).")
-
-    engine = LightEngine(bridge, conf, stop_evt, baseline=baseline); engine.start()
-
-    src = F1SourceOpenF1REST(conf["openf1"]["base_url"], conf["openf1"]["poll_seconds"],
-                             conf["openf1"].get("auth_header"), conf.get("flags", {}), stop_evt) \
-          if conf.get("source") == "openf1-rest" else \
-          F1SourceMock(["GREEN","YELLOW","SC","VSC","RED","GREEN","CHEQUERED"], 0.8, stop_evt)
-
-    # Offset de synchro TV
-    sync_off = float(conf.get("sync", {}).get("offset_seconds", 0) or 0)
-    if sync_off > 0:
-        print(f"[SYNC] Offset appliqué: {sync_off:.2f}s (tous les drapeaux seront retardés)")
-
-    print("[INFO] Live F1: écoute des évènements… (Ctrl+C pour quitter)")
-    for raw in src.events():
-        if stop_evt.is_set(): break
-        flag = normalize_flag(raw)
-
-        # appliquer l'offset AVANT de jouer le drapeau
-        if sync_off > 0:
-            if stop_evt.wait(sync_off): break
-
-        print(f"[F1] {flag}")
-        engine.play(flag)
-
-        if flag == "CHEQUERED" and conf.get("flags",{}).get("exit_on_chequered", False): break
-
-    # arrêt propre + restore baseline au Ctrl+C / fin
-    engine.stop()
-    _restore_on_exit(bridge, conf, baseline)
+    service = LiveTimingService(conf.get("flags", {}))
+    subscription = None
+    try:
+        service.wait_ready()
+        conf = ensure_devices_selected(conf, stop_evt)
+        bridge, discovered = connect_bridge(conf)
+        if discovered:
+            save_conf(conf)
+            print(f"[HUE] Nouvelle adresse du pont enregistrée : {conf['bridge_ip']}")
+        prepare_sync_group(conf, bridge)
+        baseline = BaselineStore(APP_DIR, conf)
+        if conf.get("baseline", {}).get("capture_on_start", True):
+            n = baseline.capture(bridge, conf)
+            print(f"[BASELINE] Capturée au démarrage ({n} lampes).")
+        engine = LightEngine(bridge, conf, stop_evt, baseline=baseline)
+        engine.start()
+        subscription = service.subscribe(replay_current_flag=True)
+        sync_off = float(conf.get("sync", {}).get("offset_seconds", 0) or 0)
+        print(f"[INFO] Live F1 : écoute des événements (offset TV {sync_off:.2f} s)…")
+        try:
+            play_effects(service.events(subscription, stop_evt, {"flag"}), engine, conf, stop_evt,
+                         offset_seconds=sync_off,
+                         on_play=lambda event, pattern: print(f"[F1] {event.value} → {pattern}"))
+        finally:
+            engine.stop()
+            _restore_on_exit(bridge, conf, baseline)
+    finally:
+        if subscription is not None:
+            service.unsubscribe(subscription)
+        service.stop()
 
 def run_test(conf: dict, flag: str | None, quick: bool, gap: float, stop_evt: threading.Event):
     conf = ensure_devices_selected(conf, stop_evt)
-    bridge = HueBridge(conf["bridge_ip"], conf["username"])
-    _ensure_sync_group_if_needed(conf, bridge)
+    bridge, discovered = connect_bridge(conf)
+    if discovered:
+        save_conf(conf)
+        print(f"[HUE] Nouvelle adresse du pont enregistrée : {conf['bridge_ip']}")
+    prepare_sync_group(conf, bridge)
 
     baseline = BaselineStore(APP_DIR, conf)
     if conf.get("baseline", {}).get("capture_on_start", True):
@@ -134,7 +92,10 @@ def run_test(conf: dict, flag: str | None, quick: bool, gap: float, stop_evt: th
         for raw in seq:
             if stop_evt.is_set(): break
             f = normalize_flag(raw)
-            print(f"[TEST] {f}"); engine.play(f)
+            pattern = EffectRules(conf).pattern_for(LiveEvent(kind="flag", value=f))
+            print(f"[TEST] {f}")
+            if pattern:
+                engine.play(pattern)
             end = time.monotonic() + max(0.1, gap)
             while time.monotonic() < end:
                 if stop_evt.wait(0.02): break
@@ -179,30 +140,91 @@ def run_baseline(conf: dict, sub: str, stop_evt: threading.Event):
 def run_sync_calibrate(conf: dict, stop_evt: threading.Event):
     """Attend le prochain message API, puis te demande d'appuyer Entrée quand tu le vois à l’écran.
        Enregistre sync.offset_seconds = (now - t_api)."""
-    conf = ensure_devices_selected(conf, stop_evt)
-    src = F1SourceOpenF1REST(conf["openf1"]["base_url"],
-                             conf["openf1"]["poll_seconds"],
-                             conf["openf1"].get("auth_header"),
-                             conf.get("flags", {}), stop_evt)
-    print("🔧 Calibration: j’attends le prochain message (GREEN/YELLOW/SC/VSC/RED/CHEQUERED)…")
-    for raw in src.events():
-        if stop_evt.is_set(): return
-        flag = normalize_flag(raw)
-        t_api = time.monotonic()
-        print(f"[CAL] Reçu côté API: {flag}. Dès que TU le vois à l’écran, appuie Entrée.")
+    service = LiveTimingService(conf.get("flags", {}))
+    subscription = service.subscribe()
+    try:
+        service.wait_ready()
+        print("🔧 Calibration : j’attends le prochain drapeau F1…")
+        for event in service.events(subscription, stop_evt, {"flag"}):
+            if event.initial:
+                continue
+            print(f"[CAL] Reçu côté API : {event.value}. Dès que TU le vois à l’écran, appuie Entrée.")
+            try:
+                input()
+            except KeyboardInterrupt:
+                print("\n[CAL] Annulé.")
+                return
+            offset = max(0.0, time.monotonic() - event.received_mono)
+            conf.setdefault("sync", {})["offset_seconds"] = round(offset, 2)
+            save_conf(conf)
+            print(f"[CAL] ✅ Offset enregistré : {offset:.2f}s.")
+            return
+    finally:
+        service.unsubscribe(subscription)
+        service.stop()
+
+
+def run_replay(conf: dict, session_key: str | None, speed: float, stop_evt: threading.Event):
+    if not 0.1 <= speed <= 100:
+        raise ValueError("La vitesse de replay doit être comprise entre 0,1 et 100.")
+    if not session_key:
+        print("[REPLAY] Séances passées (archive Formula 1 ; Internet requis) :")
+        for scenario in SCENARIOS:
+            print(f"  archive:{scenario.id}  {scenario.label}")
+        journal = EventJournal()
         try:
-            input()
-        except KeyboardInterrupt:
-            print("\n[CAL] Annulé."); return
-        offset = max(0.0, time.monotonic() - t_api)
-        conf.setdefault("sync", {})["offset_seconds"] = round(offset, 2)
-        save_conf(conf)
-        print(f"[CAL] ✅ Offset enregistré: {offset:.2f}s (sync.offset_seconds).")
+            sessions = journal.sessions()
+            print("[REPLAY] Séances enregistrées sur ce Mac :")
+            for session in sessions:
+                print(f"  {session['session_key']}  {session['session_name']}  ({session['flag_count']} drapeaux)")
+            if not sessions:
+                print("  Aucune pour l’instant.")
+        finally:
+            journal.close()
         return
+    if session_key.startswith("archive:"):
+        scenario_id = session_key.removeprefix("archive:")
+        if scenario_id not in SCENARIOS_BY_ID:
+            raise ValueError("Scénario historique inconnu.")
+        try:
+            recorded = list(historical_events(scenario_id))
+        except (requests.RequestException, ValueError, UnicodeError) as exc:
+            raise ValueError(f"Archive F1 indisponible : {exc}") from exc
+    else:
+        journal = EventJournal()
+        try:
+            recorded = journal.flags(session_key)
+        finally:
+            journal.close()
+    if not recorded:
+        raise ValueError("Aucun drapeau pour cette séance.")
+    conf = ensure_devices_selected(conf, stop_evt)
+    bridge, discovered = connect_bridge(conf)
+    if discovered:
+        save_conf(conf)
+    prepare_sync_group(conf, bridge)
+    baseline = BaselineStore(APP_DIR, conf)
+    if conf.get("baseline", {}).get("capture_on_start", True):
+        baseline.capture(bridge, conf)
+    engine = LightEngine(bridge, conf, stop_evt, baseline=baseline)
+    engine.start()
+    print(f"[REPLAY] {len(recorded)} drapeaux à vitesse ×{speed:g} (Ctrl+C pour arrêter).")
+    try:
+        play_effects(replay_events(recorded, speed, stop_evt), engine, conf, stop_evt,
+                     on_play=lambda event, pattern: print(f"[REPLAY] {event.value} → {pattern}"))
+    finally:
+        engine.stop()
+        _restore_on_exit(bridge, conf, baseline)
 
 def run_sync_show(conf: dict):
     off = float((conf.get("sync", {}) or {}).get("offset_seconds", 0) or 0)
     print(f"[SYNC] offset_seconds = {off:.2f}s")
+
+def run_check_live(conf: dict, stop_evt: threading.Event):
+    src = F1SourceFormula1Live(conf.get("flags", {}), stop_evt)
+    started = src.check_connection()
+    print("[F1] Connexion au flux gratuit OK.")
+    print("[F1] Séance en cours." if started else "[F1] Aucune séance active dans le flux pour l'instant.")
 
 # --- handler qui RE-lève KeyboardInterrupt (pour le setup) ---
 def _sigint_raise(sig, frame):
@@ -223,8 +245,9 @@ def main():
     p = argparse.ArgumentParser(description="Synchronise Philips Hue avec les drapeaux F1")
     sub = p.add_subparsers(dest="cmd")
 
-    live = sub.add_parser("live", help="Mode live (OpenF1)")
+    live = sub.add_parser("live", help="Mode live (flux Formula 1)")
     live.add_argument("--bridge-ip", help="Override bridge IP (n’écrit pas dans le YAML)")
+    sub.add_parser("check-live", help="Vérifier la source F1 sans commander les lampes")
 
     t = sub.add_parser("test", help="Mode test (simulation)")
     t.add_argument("flag", nargs="?", help="GREEN|YELLOW|RED|SC|VSC|SC_ENDING|VSC_ENDING|CHEQUERED|BLUE")
@@ -241,6 +264,10 @@ def main():
     sync = sub.add_parser("sync", help="Outils de synchronisation TV")
     sync.add_argument("action", choices=["calibrate","show"])
 
+    replay = sub.add_parser("replay", help="Lister ou rejouer les séances locales et les archives Formula 1")
+    replay.add_argument("session_key", nargs="?", help="Clé locale ou archive:ID ; sans clé, liste les séances")
+    replay.add_argument("--speed", type=float, default=10.0, help="Accélération entre drapeaux (0.1 à 100)")
+
     args = p.parse_args()
     if getattr(args, "bridge_ip", None):
         conf["bridge_ip"] = args.bridge_ip
@@ -250,6 +277,8 @@ def main():
     try:
         if args.cmd == "live":
             run_live(conf, stop_evt)
+        elif args.cmd == "check-live":
+            run_check_live(conf, stop_evt)
         elif args.cmd == "test":
             run_test(conf, getattr(args,"flag",None), getattr(args,"quick",False), getattr(args,"gap",1.0), stop_evt)
         elif args.cmd == "setup":
@@ -267,8 +296,13 @@ def main():
         elif args.cmd == "sync":
             if args.action == "show": run_sync_show(conf)
             else: run_sync_calibrate(conf, stop_evt)
+        elif args.cmd == "replay":
+            run_replay(conf, args.session_key, args.speed, stop_evt)
         else:
             p.print_help()
+    except (HueBridgeConnectionError, ConnectionError, ValueError) as e:
+        print(f"[ERREUR] {e}")
+        raise SystemExit(2) from None
     finally:
         stop_evt.set()
 

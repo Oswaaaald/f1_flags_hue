@@ -5,43 +5,38 @@
 SHELL := /bin/bash
 
 # --- Variables (override possibles : make quick GAP=0.5) ---
-PY            ?= python3
+PY            ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python3)
 APP           ?= f1_hue.py
-MOCK          ?= mock_server.py
 CONF_DIR      ?= ./
 CONF_EXAMPLE  ?= config.example.yml
 CONF          ?= $(CONF_DIR)config.yml
 
-MOCK_SCRIPT   ?= mock_scripts/demo.yml
-MOCK_PORT     ?= 8008
-MOCK_SPEED    ?= 1.0
-MOCK_PIDFILE  ?= .mock.pid
 GAP           ?= 1.0
 
 export LANG = C.UTF-8
 export LC_ALL = C.UTF-8
 export PYTHONIOENCODING = UTF-8
 
-.PHONY: help install init-config run-live test quick \
+.PHONY: help install init-config run-live check-live test quick \
         setup-wizard setup-link setup-lights setup-groups \
         baseline-capture baseline-restore baseline-print \
         sync-calibrate sync-show \
-        mock-start mock-stop mock-restart \
         doctor web web-run
 
 help:
 	@echo ""
 	@echo " F1 Hue Sync — commandes utiles"
 	@echo ""
-	@echo "  make install                Installer dépendances (requests, PyYAML)"
-	@echo "  make init-config            Copier config.example.yml -> .f1_hue/config.yml (si absent)"
+	@echo "  make install                Installer les dépendances Python"
+	@echo "  make init-config            Copier config.example.yml -> config.yml (si absent)"
 	@echo ""
 	@echo "  make setup-wizard           Assistant: choisir pièce/zone(s)/lampes"
 	@echo "  make setup-link             Vérifier la liaison bridge/username"
 	@echo "  make setup-lights           Lister les lampes"
 	@echo "  make setup-groups           Lister les groupes (pièces/zones)"
 	@echo ""
-	@echo "  make run-live               Lancer en live (OpenF1)"
+	@echo "  make run-live               Lancer en live (flux Formula 1)"
+	@echo "  make check-live             Vérifier la connexion au flux sans lampes"
 	@echo "  make test                   Mode test interactif"
 	@echo "  make quick GAP=1.0          Démo rapide (gap entre drapeaux)"
 	@echo ""
@@ -51,10 +46,6 @@ help:
 	@echo "  make baseline-capture       Capturer la baseline utilisateur"
 	@echo "  make baseline-restore       Restaurer la baseline utilisateur"
 	@echo "  make baseline-print         Afficher la baseline sauvegardée"
-	@echo ""
-	@echo "  make mock-start             Démarrer le mock (port $(MOCK_PORT), script $(MOCK_SCRIPT))"
-	@echo "  make mock-stop              Stopper le mock"
-	@echo "  make mock-restart           Redémarrer le mock"
 	@echo ""
 	@echo "  make doctor                 Petit check rapide (Python, deps, conf, bridge)"
 	@echo ""
@@ -76,8 +67,11 @@ init-config:
 # ---- RUN / TEST --------------------------------------------------------------
 
 run-live:
-	@echo "==> Live OpenF1"
+	@echo "==> Live F1"
 	@$(PY) $(APP) live
+
+check-live:
+	@$(PY) $(APP) check-live
 
 test:
 	@echo "==> Mode test"
@@ -138,26 +132,6 @@ sync-calibrate:
 sync-show:
 	@$(PY) $(APP) sync show
 
-# ---- MOCK SERVER -------------------------------------------------------------
-
-mock-start:
-	@echo "==> Démarrage mock OpenF1 (port $(MOCK_PORT), speed $(MOCK_SPEED))"
-	@nohup $(PY) $(MOCK) --port $(MOCK_PORT) --script "$(MOCK_SCRIPT)" --speed $(MOCK_SPEED) > mock.log 2>&1 & echo $$! > $(MOCK_PIDFILE)
-	@echo "✓ Mock lancé (PID $$(cat $(MOCK_PIDFILE))) — logs: mock.log"
-
-mock-stop:
-	@echo "==> Arrêt mock"
-	@-if [ -f "$(MOCK_PIDFILE)" ]; then \
-		kill $$(cat $(MOCK_PIDFILE)) 2>/dev/null || true; \
-		rm -f "$(MOCK_PIDFILE)"; \
-		echo "✓ Mock arrêté (PID file supprimé)"; \
-	else \
-		pkill -f "$(MOCK)" 2>/dev/null || true; \
-		echo "• Aucun PID file — tentative pkill"; \
-	fi
-
-mock-restart: mock-stop mock-start
-
 # ---- DOCTOR ------------------------------------------------------------------
 
 doctor:
@@ -167,6 +141,7 @@ doctor:
 	@echo " • Config path : $(CONF)  ($$( [ -f "$(CONF)" ] && echo 'existe' || echo 'absent' ))"
 	@which $(PY) >/dev/null 2>&1 || (echo " ✖ python introuvable"; exit 1)
 	@$(PY) -c "import sys; sys.exit(0)"
-	@pip show requests >/dev/null 2>&1 && echo ' • Dep         : requests OK' || echo ' • Dep         : requests MISSING (pip install -r requirements.txt)'
-	@pip show PyYAML   >/dev/null 2>&1 && echo ' • Dep         : PyYAML   OK' || echo ' • Dep         : PyYAML   MISSING (pip install -r requirements.txt)'
+	@$(PY) -m pip show requests >/dev/null 2>&1 && echo ' • Dep         : requests OK' || echo ' • Dep         : requests MISSING (make install)'
+	@$(PY) -m pip show PyYAML   >/dev/null 2>&1 && echo ' • Dep         : PyYAML   OK' || echo ' • Dep         : PyYAML   MISSING (make install)'
+	@$(PY) -m pip show signalrcore >/dev/null 2>&1 && echo ' • Dep         : signalrcore OK' || echo ' • Dep         : signalrcore MISSING (make install)'
 	@$(PY) $(APP) setup link || true

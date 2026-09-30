@@ -78,6 +78,7 @@ h1{ margin:0; font-size:22px; }
 }
 .btn:hover{ transform: none }
 .btn:active{ transform: none }
+.btn:disabled{ opacity:.5; cursor:not-allowed }
 .btn.ghost{ background:transparent; color:#e7edf4; border:1px solid var(--border) }
 .btn.danger{ background:var(--danger); color:#280d0d }
 
@@ -88,13 +89,62 @@ h1{ margin:0; font-size:22px; }
 
 /* Cal layout (générique) */
 .cal-layout{
-  display:grid;
-  grid-template-columns: 1fr auto;
+  display:flex;
+  flex-wrap:wrap;
+  justify-content:space-between;
   gap:14px;
   align-items:center;
   margin-bottom:10px;
 }
+.cal-col.left{ min-width:0; }
 .cal-col.right{ display:flex; justify-content:flex-end; align-items:center; }
+
+.calibration-workspace{
+  display:grid;
+  grid-template-columns:minmax(0, 1fr) 310px;
+  align-items:start;
+  gap:18px;
+  margin-top:12px;
+}
+.calibration-controls{ min-width:0; }
+.calibration-log{
+  position:sticky;
+  top:12px;
+  min-width:0;
+  padding:12px;
+  background:#0c141e;
+  border:1px solid var(--border);
+  border-radius:12px;
+}
+.calibration-log h3{ margin:0 0 5px; }
+.calibration-log .hint{ margin:0 0 8px; }
+.calibration-log .log{ margin-top:0; min-height:100px; max-height:180px; }
+.flag-history-heading{ display:flex; justify-content:space-between; align-items:center; gap:8px; margin:16px 0 6px; }
+.flag-history-heading h3{ margin:0; }
+.flag-history-heading .btn{ min-height:30px; padding:5px 8px; font-size:12px; }
+.flag-history{
+  max-height:260px;
+  overflow:auto;
+  background:#0a0f17;
+  border:1px solid var(--border);
+  border-radius:10px;
+}
+.flag-entry{ padding:8px 10px; border-bottom:1px solid var(--border); font-size:12px; }
+.flag-entry:last-child{ border-bottom:0; }
+.flag-entry-title{ display:flex; justify-content:space-between; gap:8px; align-items:baseline; }
+.flag-entry-title strong{ color:#a8ff9c; font-size:13px; }
+.flag-entry-time,.flag-entry-meta{ color:var(--muted); overflow-wrap:anywhere; }
+.flag-entry-meta{ margin-top:3px; }
+#flagHistoryStatus{ margin:6px 0 0; }
+@media (max-width:800px){
+  .calibration-workspace{ display:flex; flex-direction:column; }
+  .calibration-log{ order:-1; width:100%; top:8px; z-index:2; }
+  .calibration-log .hint{ display:none; }
+  .calibration-log #flagHistoryStatus{ display:block; }
+  .calibration-log .log{ min-height:50px; max-height:80px; }
+  .flag-history{ max-height:120px; }
+  .calibration-log .flag-history-heading{ margin-top:8px; }
+}
 
 /* Label de gauche en absolu */
 .cal-col{ position:relative; padding-top:18px; }
@@ -195,6 +245,9 @@ h1{ margin:0; font-size:22px; }
 .bridge-status{ font-weight:600; }
 .bridge-status.connected{ color:var(--ok); }
 .bridge-status.not-connected{ color:var(--text); }
+.bridge-feedback{ font-size:13px; min-height:18px; color:var(--muted); overflow-wrap:anywhere; }
+.bridge-feedback.error{ color:var(--danger); }
+.bridge-feedback.success{ color:var(--ok); }
 
 /* … tout le fichier existant inchangé … */
 

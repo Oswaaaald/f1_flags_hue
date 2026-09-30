@@ -6,14 +6,11 @@ light_ids: []
 bri: 254
 transition_tenths: 5
 off_transition_tenths: 5
-source: openf1-rest
-openf1:
-  base_url: "https://api.openf1.org/v1"
-  poll_seconds: 1.0
 flags:
-  seek_live: true
   ignore_blue: true
   exit_on_chequered: false
+rules:
+  flag_patterns: {}
 behavior:
   blink_method: alert
   alert_watchdog_seconds: 600

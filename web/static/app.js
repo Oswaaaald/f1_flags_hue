@@ -4,6 +4,8 @@ const linkBtn     = document.getElementById("linkBtn");
 const bridgeUser  = document.getElementById("bridgeUser");
 const bridgeStatus= document.getElementById("bridgeStatus");
 const bridgeHint  = document.getElementById("bridgeHint");
+const bridgeFeedback = document.getElementById("bridgeFeedback");
+let bridgeLinkAttempted = false;
 
 const stMode   = document.getElementById("stMode");
 const stFlag   = document.getElementById("stFlag");
@@ -11,6 +13,20 @@ const stStarted= document.getElementById("stStarted");
 const stBase   = document.getElementById("stBase");
 const stOff    = document.getElementById("stOff");
 const logEl    = document.getElementById("log");
+const flagHistory = document.getElementById("flagHistory");
+const flagHistoryStatus = document.getElementById("flagHistoryStatus");
+const flagHistoryRefresh = document.getElementById("flagHistoryRefresh");
+const stFeed = document.getElementById("stFeed");
+const stSession = document.getElementById("stSession");
+const stLap = document.getElementById("stLap");
+const stFeedTime = document.getElementById("stFeedTime");
+const replaySession = document.getElementById("replaySession");
+const replaySpeed = document.getElementById("replaySpeed");
+const replayRefresh = document.getElementById("replayRefresh");
+const replayStart = document.getElementById("replayStart");
+const replayResult = document.getElementById("replayResult");
+const replayDescription = document.getElementById("replayDescription");
+const replaySpeedHelp = document.getElementById("replaySpeedHelp");
 
 // Selection UI
 const segBtns = document.querySelectorAll(".seg-btn");
@@ -59,6 +75,10 @@ const calStart  = document.getElementById("calStart");
 const calStop   = document.getElementById("calStop");
 const markSeen  = document.getElementById("markSeen");
 const calState  = document.getElementById("calState");
+const tvClockInput = document.getElementById("tvClockInput");
+const clockCompare = document.getElementById("clockCompare");
+const clockApply = document.getElementById("clockApply");
+const clockResult = document.getElementById("clockResult");
 
 // --- state ---
 let INVENTORY = { groups: {}, lights: {} };
@@ -81,6 +101,68 @@ function fmtTime(ts){
   if (!ts) return "—";
   const d = new Date(ts*1000);
   return d.toLocaleString();
+}
+function fmtReceivedTime(ts){
+  const date = new Date(ts * 1000);
+  if (!Number.isFinite(date.getTime())) return "heure inconnue";
+  return `${date.toLocaleDateString("fr-BE")} ${date.toLocaleTimeString("fr-BE", {hour12:false})}.${String(date.getMilliseconds()).padStart(3, "0")}`;
+}
+let flagHistorySignature = null;
+let flagHistoryLoading = false;
+async function refreshFlagHistory(){
+  if (flagHistoryLoading) return;
+  flagHistoryLoading = true;
+  flagHistoryRefresh.disabled = true;
+  try{
+    const response = await fetch("/api/journal/flags?limit=30", {cache:"no-store"});
+    if (!response.ok) throw new Error(response.status === 404 ? "Redémarre make web pour charger le nouvel historique." : "Lecture du journal impossible.");
+    const data = await response.json();
+    const signature = data.flags.map(item => item.id).join(",");
+    if (signature !== flagHistorySignature){
+      flagHistory.replaceChildren();
+      for (const item of data.flags){
+        const entry = document.createElement("div");
+        entry.className = "flag-entry";
+        const title = document.createElement("div");
+        title.className = "flag-entry-title";
+        const flag = document.createElement("strong");
+        flag.textContent = item.flag;
+        const received = document.createElement("span");
+        received.className = "flag-entry-time";
+        received.textContent = `Réception : ${fmtReceivedTime(item.received_at)}`;
+        title.append(flag, received);
+        const session = document.createElement("div");
+        session.className = "flag-entry-meta";
+        session.textContent = item.session_name || (item.session_key ? `Séance ${item.session_key}` : "Séance inconnue");
+        entry.append(title, session);
+        if (item.source_utc){
+          const source = document.createElement("div");
+          source.className = "flag-entry-meta";
+          source.textContent = `Heure F1 : ${item.source_utc.replace("T", " ").replace(/Z$/, "")} UTC`;
+          entry.appendChild(source);
+        }
+        flagHistory.appendChild(entry);
+      }
+      flagHistory.scrollTop = 0;
+      flagHistorySignature = signature;
+    }
+    flagHistoryStatus.textContent = data.flags.length ? `${data.flags.length} derniers drapeaux reçus sur ce Mac.` : "Aucun drapeau reçu depuis le démarrage du journal local.";
+  }catch(error){
+    flagHistoryStatus.textContent = String(error.message || error);
+  }finally{
+    flagHistoryLoading = false;
+    flagHistoryRefresh.disabled = false;
+  }
+}
+flagHistoryRefresh.onclick = refreshFlagHistory;
+refreshFlagHistory();
+setInterval(refreshFlagHistory, 5000);
+function updateFeedStatus(feed){
+  if (!feed) return;
+  stFeed.textContent = feed.connected ? "connecté" : (feed.last_error ? `déconnecté (${feed.last_error})` : "connexion…");
+  stSession.textContent = [feed.session_name, feed.session_status].filter(Boolean).join(" — ") || "—";
+  stLap.textContent = feed.current_lap == null ? "—" : `${feed.current_lap}/${feed.total_laps || "?"}`;
+  stFeedTime.textContent = fmtTime(feed.last_data_at);
 }
 function setBadgeOffset(val){
   offsetBadge.textContent = (val!=null && !isNaN(val)) ? `${Number(val).toFixed(2)} s` : "—";
@@ -120,6 +202,10 @@ function setBridgeStatus(connected){
     if (bridgeHint) bridgeHint.style.display = "";
   }
 }
+function setBridgeFeedback(message, kind=""){
+  bridgeFeedback.textContent = message;
+  bridgeFeedback.className = `bridge-feedback ${kind}`;
+}
 
 // --- run status UI ---
 function setRunStatus(text, cls){
@@ -134,6 +220,7 @@ function updateRunUI({running, mode, pendingStart=false, pendingStop=false, gap=
   if (pendingStart){
     startLive.disabled = true;
     startTest.disabled = true;
+    replayStart.disabled = true;
     stopBtn.disabled = true;
     setRunStatus("Statut: démarrage…", "pending");
     return;
@@ -141,6 +228,7 @@ function updateRunUI({running, mode, pendingStart=false, pendingStop=false, gap=
   if (pendingStop){
     startLive.disabled = true;
     startTest.disabled = true;
+    replayStart.disabled = true;
     stopBtn.disabled = true;
     setRunStatus("Statut: arrêt en cours…", "stopping");
     return;
@@ -149,6 +237,7 @@ function updateRunUI({running, mode, pendingStart=false, pendingStop=false, gap=
   if (isRunning){
     startLive.disabled = true;
     startTest.disabled = true;
+    replayStart.disabled = true;
     stopBtn.disabled = false;
     if (mode === "live"){
       setRunStatus("Statut: live en cours", "live");
@@ -160,6 +249,7 @@ function updateRunUI({running, mode, pendingStart=false, pendingStop=false, gap=
   }else{
     startLive.disabled = false;
     startTest.disabled = false;
+    replayStart.disabled = !replaySession.value;
     stopBtn.disabled = true;
     setRunStatus("Statut: idle", "idle");
   }
@@ -172,10 +262,18 @@ async function loadInventory(){
     const groups = await gr.json();
     const lr = await fetch("/api/hue/lights");
     const lights = await lr.json();
+    if (!gr.ok || !lr.ok || groups.ok === false || lights.ok === false){
+      throw new Error(groups.error || lights.error || "Pont Hue inaccessible");
+    }
     INVENTORY.groups = groups || {};
     INVENTORY.lights = lights || {};
+    setBridgeStatus(true);
+    return true;
   }catch(e){
-    addLog(`ERROR: inventaire — ${e}`, "err");
+    INVENTORY = { groups: {}, lights: {} };
+    setBridgeStatus(false);
+    addLog(`Inventaire Hue indisponible — ${e}`, "err");
+    return false;
   }
 }
 
@@ -329,24 +427,8 @@ function setMode(mode){
     bridgeUser.textContent = conf.username || "—";
     setBadgeOffset((conf.sync && conf.sync.offset_seconds) || 0);
 
-    // auto-discover si pas d’IP
-    if (!bridgeIp.value){
-      try{
-        const r = await fetch("/api/bridge/discover");
-        const j = await r.json();
-        if (j && j.ip){
-          bridgeIp.value = j.ip;
-          addLog(`Bridge détecté automatiquement: ${j.ip}`, "");
-        }else{
-          addLog("Découverte auto: aucun bridge détecté.", "err");
-        }
-      }catch(e){
-        addLog(`Découverte auto: erreur — ${e}`, "err");
-      }
-    }
-
     // statut liaison initial
-    setBridgeStatus(!!(conf.username && conf.bridge_ip));
+    setBridgeStatus(false);
 
     const sel = await (await fetch("/api/setup/selection")).json();
     selection = {
@@ -363,7 +445,22 @@ function setMode(mode){
     stStarted.textContent = st.started_at ? fmtTime(st.started_at) : "—";
   }catch(e){}
 
-  await loadInventory();
+  const inventoryAvailable = await loadInventory();
+  if (!inventoryAvailable){
+    try{
+      const r = await fetch("/api/bridge/discover");
+      const j = await r.json();
+      if (!bridgeLinkAttempted && j && j.ip && bridgeIp.value !== j.ip){
+        bridgeIp.value = j.ip;
+        setBridgeFeedback(`Pont détecté à ${j.ip}. Tu peux réessayer la liaison.`, "");
+        addLog(`Bridge détecté automatiquement: ${j.ip}`, "");
+      }else if (!bridgeIp.value){
+        setBridgeFeedback("Aucun pont détecté. Entre son adresse IP depuis l’application Hue.", "error");
+      }
+    }catch(e){
+      if (!bridgeIp.value) setBridgeFeedback("Découverte indisponible. Entre l’adresse IP du pont.", "error");
+    }
+  }
   setMode("single");
 })();
 
@@ -434,10 +531,12 @@ saveSelBtn.addEventListener("click", async ()=>{
 // --- bridge actions ---
 linkBtn.onclick = async ()=>{
   const ip = bridgeIp.value.trim();
-  if (!ip) { alert("Entre une IP de bridge."); return; }
+  if (!ip) { setBridgeFeedback("Entre l’adresse IP du pont Hue.", "error"); return; }
+  bridgeLinkAttempted = true;
 
   // désactiver pendant la tentative
   linkBtn.disabled = true;
+  setBridgeFeedback(`Connexion au pont ${ip}…`);
 
   try{
     const r = await fetch("/api/bridge/link", {
@@ -448,25 +547,29 @@ linkBtn.onclick = async ()=>{
     const j = await r.json();
 
     if (j.ok){
+      bridgeIp.value = j.bridge_ip;
       bridgeUser.textContent = j.username;
-      setBridgeStatus(true);
       addLog(`Bridge lié: ${j.bridge_ip}`, "");
-      await loadInventory();
+      const available = await loadInventory();
+      setBridgeFeedback(available ? "Pont lié et lampes accessibles." : "Pont lié, mais les lampes ne répondent pas.", available ? "success" : "error");
       setMode(MODE);
     }else{
       // NE PAS dégrader l’état: relire la conf réelle
+      if (j.bridge_ip) bridgeIp.value = j.bridge_ip;
+      setBridgeFeedback(j.error || "La liaison a échoué.", "error");
       addLog(j.error || "Erreur de liaison", "err");
       const conf = await (await fetch("/api/config")).json();
       bridgeUser.textContent = conf.username || "—";
-      setBridgeStatus(!!(conf.username && conf.bridge_ip));
+      await loadInventory();
     }
   }catch(e){
     // idem: on conserve le statut réel
+    setBridgeFeedback("Le serveur local ne répond pas. Vérifie que make web est toujours lancé.", "error");
     addLog(`Erreur réseau lors de la liaison — ${e}`, "err");
     try{
       const conf = await (await fetch("/api/config")).json();
       bridgeUser.textContent = conf.username || "—";
-      setBridgeStatus(!!(conf.username && conf.bridge_ip));
+      await loadInventory();
     }catch(_){}
   }finally{
     linkBtn.disabled = false;
@@ -474,13 +577,100 @@ linkBtn.onclick = async ()=>{
 };
 
 // --- start/stop ---
+let replayCatalog = {historical: [], local: []};
+function updateReplayDescription(){
+  const [kind, id] = replaySession.value.split(":", 2);
+  if (kind === "history"){
+    const scenario = replayCatalog.historical.find(item => item.id === id);
+    replayDescription.textContent = scenario ? `${scenario.description}. Source : archive Formula 1.` : "";
+  }else if (kind === "local"){
+    replayDescription.textContent = "Enregistrement sur ce Mac, disponible hors connexion.";
+  }else{
+    replayDescription.textContent = "";
+  }
+  replayStart.disabled = isRunning || !replaySession.value;
+}
+function updateReplaySpeedHelp(){
+  const speed = Number(replaySpeed.value);
+  const seconds = 600 / speed;
+  const duration = seconds >= 60 ? `${seconds / 60} min` : `${seconds} s`;
+  replaySpeedHelp.textContent = `Exemple : 10 min entre deux drapeaux deviennent ${duration} à ×${speed}. La durée de chaque effet lumineux reste identique.`;
+}
+async function refreshReplaySessions(){
+  replayRefresh.disabled = true;
+  try{
+    const previous = replaySession.value;
+    const response = await fetch("/api/replay/scenarios");
+    if (!response.ok) throw new Error("Liste des séances indisponible");
+    replayCatalog = await response.json();
+    replaySession.replaceChildren();
+    const historicalGroup = document.createElement("optgroup");
+    historicalGroup.label = "Séances passées · archive Formula 1";
+    for (const scenario of replayCatalog.historical){
+      const option = document.createElement("option");
+      option.value = `history:${scenario.id}`;
+      option.textContent = scenario.label;
+      historicalGroup.appendChild(option);
+    }
+    replaySession.appendChild(historicalGroup);
+    const localGroup = document.createElement("optgroup");
+    localGroup.label = "Séances enregistrées sur ce Mac";
+    for (const session of replayCatalog.local){
+      if (!session.flag_count) continue;
+      const option = document.createElement("option");
+      option.value = `local:${session.session_key}`;
+      option.textContent = `${session.session_name || "Séance"} — ${session.flag_count} drapeaux (${new Date(session.started_at * 1000).toLocaleDateString()})`;
+      localGroup.appendChild(option);
+    }
+    if (localGroup.children.length) replaySession.appendChild(localGroup);
+    if (previous && [...replaySession.options].some(option => option.value === previous)) replaySession.value = previous;
+    updateReplayDescription();
+    replayResult.textContent = localGroup.children.length
+      ? "Choisis une séance et une vitesse de replay."
+      : "Aucun enregistrement local pour l’instant ; les séances passées sont disponibles ci-dessus.";
+    replayResult.className = "bridge-feedback";
+  }catch(error){
+    replayResult.textContent = String(error.message || error);
+    replayResult.className = "bridge-feedback error";
+  }finally{
+    replayRefresh.disabled = false;
+  }
+}
+replayRefresh.onclick = refreshReplaySessions;
+replaySession.onchange = updateReplayDescription;
+replaySpeed.onchange = updateReplaySpeedHelp;
+updateReplaySpeedHelp();
+replayStart.onclick = async ()=>{
+  if (isRunning || !replaySession.value) return;
+  replayStart.disabled = true;
+  const speed = Number(replaySpeed.value);
+  const [kind, id] = replaySession.value.split(":", 2);
+  try{
+    const response = await fetch("/api/replay/start", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(kind === "history" ? {scenario_id: id, speed} : {session_key: id, speed})
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "Replay impossible");
+    updateRunUI({running:false, pendingStart:true});
+    replayResult.textContent = `Replay démarré : temps entre les drapeaux accéléré ×${speed}.`;
+    replayResult.className = "bridge-feedback success";
+  }catch(error){
+    replayResult.textContent = String(error.message || error);
+    replayResult.className = "bridge-feedback error";
+    replayStart.disabled = false;
+  }
+};
+refreshReplaySessions();
+
 startLive.onclick = async ()=>{
   if (starting || isRunning) return;
   updateRunUI({running:false, pendingStart:true});
   try{
-    await fetch("/api/start", {method:"POST", headers:{'Content-Type':'application/json'}, body: JSON.stringify({mode:"live"})});
+    const response = await fetch("/api/start", {method:"POST", headers:{'Content-Type':'application/json'}, body: JSON.stringify({mode:"live"})});
+    if (!response.ok) throw new Error((await response.json()).error || "Démarrage impossible");
   }catch(e){
-    addLog("Erreur réseau au démarrage live", "err");
+    addLog(`Démarrage live impossible : ${e.message || e}`, "err");
     updateRunUI({running:false}); // revert
   }
 };
@@ -489,9 +679,10 @@ startTest.onclick = async ()=>{
   const gap = parseFloat(gapInput.value || "1.0");
   updateRunUI({running:false, pendingStart:true});
   try{
-    await fetch("/api/start", {method:"POST", headers:{'Content-Type':'application/json'}, body: JSON.stringify({mode:"test", gap})});
+    const response = await fetch("/api/start", {method:"POST", headers:{'Content-Type':'application/json'}, body: JSON.stringify({mode:"test", gap})});
+    if (!response.ok) throw new Error((await response.json()).error || "Démarrage impossible");
   }catch(e){
-    addLog("Erreur réseau au démarrage test", "err");
+    addLog(`Démarrage test impossible : ${e.message || e}`, "err");
     updateRunUI({running:false});
   }
 };
@@ -516,12 +707,19 @@ function getCurrentOffset(){
   return Number(v) || 0;
 }
 async function setOffset(val){
-  confCache = confCache || {};
-  confCache.sync = confCache.sync || {};
-  confCache.sync.offset_seconds = Number(val);
-  setBadgeOffset(val);
-  await fetch("/api/config", {method:"POST", headers:{'Content-Type':'application/json'}, body: JSON.stringify({sync: confCache.sync})});
-  addLog(`Offset enregistré: ${Number(val).toFixed(2)}s`, "");
+  try{
+    const r = await fetch("/api/config", {method:"POST", headers:{'Content-Type':'application/json'}, body: JSON.stringify({sync: {offset_seconds: Number(val)}})});
+    if (!r.ok) throw new Error((await r.json()).error || "Enregistrement impossible");
+    confCache = confCache || {};
+    confCache.sync = confCache.sync || {};
+    confCache.sync.offset_seconds = Number(val);
+    setBadgeOffset(val);
+    addLog(`Offset enregistré: ${Number(val).toFixed(2)}s`, "");
+    return true;
+  }catch(e){
+    addLog(`Offset non enregistré — ${e}`, "err");
+    return false;
+  }
 }
 offMinus025.onclick = ()=> setOffset(Math.max(0, getCurrentOffset() - 0.25));
 offMinus010.onclick = ()=> setOffset(Math.max(0, getCurrentOffset() - 0.10));
@@ -537,15 +735,43 @@ offSetBtn.onclick   = ()=>{
 // --- calibration (auto) ---
 let calWaiting = false;
 let calLastEventTs = null;
+let calStream = null;
 
 calStart.onclick = () => {
+  if (calStream) calStream.close();
   calWaiting = true;
   calLastEventTs = null;
   calState.textContent = "État: attente message API…";
   addLog("Calibration: en attente du prochain message API (FLAG/SC/VSC…)", "");
+  calStream = new EventSource("/api/sync/flag-stream");
+  calStream.onmessage = event=>{
+    const data = JSON.parse(event.data);
+    if (data.type === "flag"){
+      calLastEventTs = performance.now();
+      calState.textContent = `État: ${data.flag} reçu — clique quand tu le vois à la TV`;
+      addLog(`Calibration : ${data.flag} reçu de la F1. Clique quand tu le vois à la TV.`, "flag");
+      calStream.close();
+      calStream = null;
+    }else if (data.type === "error"){
+      calWaiting = false;
+      calState.textContent = `État: ${data.message}`;
+      addLog(`Calibration : ${data.message}`, "err");
+      calStream.close();
+      calStream = null;
+    }
+  };
+  calStream.onerror = ()=>{
+    if (!calStream) return;
+    calWaiting = false;
+    calState.textContent = "État: connexion F1 interrompue";
+    addLog("Calibration : connexion F1 interrompue.", "err");
+    calStream.close();
+    calStream = null;
+  };
 };
 
 calStop.onclick = () => {
+  if (calStream){ calStream.close(); calStream = null; }
   calWaiting = false;
   calLastEventTs = null;
   calState.textContent = "État: idle";
@@ -558,6 +784,7 @@ markSeen.onclick = async () => {
     return;
   }
   calWaiting = false;
+  if (calStream){ calStream.close(); calStream = null; }
 
   if (calLastEventTs === null){
     calState.textContent = "État: idle";
@@ -567,13 +794,168 @@ markSeen.onclick = async () => {
 
   const now = performance.now();
   const offsetSec = Math.max(0, (now - calLastEventTs) / 1000);
-  await setOffset(offsetSec);
-
-  calState.textContent = "État: calibré (auto)";
-  addLog(`Calibration auto: offset=${offsetSec.toFixed(2)}s`, "");
+  if (await setOffset(offsetSec)){
+    calState.textContent = "État: calibré (auto)";
+    addLog(`Calibration auto: offset=${offsetSec.toFixed(2)}s`, "");
+  }else{
+    calState.textContent = "État: erreur d’enregistrement";
+  }
 };
 
+// --- calibration par comparaison des chronos ---
+let clockCandidate = null;
+tvClockInput.addEventListener("input", ()=>{
+  clockCandidate = null;
+  clockApply.disabled = true;
+  clockResult.textContent = "";
+});
+
+function formatSessionTime(seconds){
+  const total = Math.max(0, Math.floor(seconds));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor(total / 60) % 60;
+  const secs = String(total % 60).padStart(2, "0");
+  return hours ? `${hours}:${String(minutes).padStart(2, "0")}:${secs}` : `${Math.floor(total / 60)}:${secs}`;
+}
+
+clockCompare.onclick = async ()=>{
+  clockCandidate = null;
+  clockApply.disabled = true;
+  clockCompare.disabled = true;
+  clockResult.className = "bridge-feedback";
+  clockResult.textContent = "Lecture du chrono F1…";
+  try{
+    const r = await fetch("/api/sync/compare-clock", {
+      method:"POST",
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({tv_remaining: tvClockInput.value.trim()})
+    });
+    if (r.status === 404) throw new Error("Redémarre make web pour activer la comparaison des chronos.");
+    const result = await r.json();
+    if (!r.ok) throw new Error(result.error || "Comparaison impossible");
+    const estimate = result.estimated_offset_seconds;
+    const session = result.session_name ? ` (${result.session_name})` : "";
+    clockResult.textContent = `Au clic : TV ${result.tv_remaining}, API ${formatSessionTime(result.api_remaining_seconds)}${session}. Retard estimé : ${estimate} s (± 1 s).` +
+      (result.can_apply ? " Vérifie la séance, puis enregistre si la valeur te convient." : " Valeur non applicable : les drapeaux ne peuvent être avancés avant leur réception.");
+    clockResult.className = `bridge-feedback ${result.can_apply ? "success" : "error"}`;
+    if (result.can_apply){
+      clockCandidate = estimate;
+      clockApply.disabled = false;
+    }
+  }catch(e){
+    clockResult.textContent = String(e.message || e);
+    clockResult.className = "bridge-feedback error";
+  }finally{
+    clockCompare.disabled = false;
+  }
+};
+
+clockApply.onclick = async ()=>{
+  if (clockCandidate === null) return;
+  clockApply.disabled = true;
+  if (await setOffset(clockCandidate)){
+    clockResult.textContent += isRunning ? " Offset enregistré : redémarre Live pour l’appliquer." : " Offset enregistré.";
+  }else{
+    clockResult.textContent = "Enregistrement impossible. Réessaie.";
+    clockResult.className = "bridge-feedback error";
+    clockApply.disabled = false;
+  }
+};
+
+function setupEventCalibration(kind, url, markerType, markerLabel){
+  const watch = document.getElementById(`${kind}Watch`) || document.getElementById(`${kind}Start`);
+  const cancel = document.getElementById(`${kind}Cancel`);
+  const seen = document.getElementById(`${kind}Seen`);
+  const apply = document.getElementById(`${kind}Apply`);
+  const result = document.getElementById(`${kind}Result`);
+  let stream = null;
+  let receivedAt = null;
+  let candidate = null;
+  let label = markerLabel;
+
+  function closeStream(){
+    if (stream){ stream.close(); stream = null; }
+  }
+  function reset(){
+    closeStream();
+    receivedAt = null;
+    candidate = null;
+    watch.disabled = false;
+    cancel.disabled = true;
+    seen.disabled = true;
+    apply.disabled = true;
+  }
+  watch.onclick = ()=>{
+    reset();
+    watch.disabled = true;
+    cancel.disabled = false;
+    result.className = "bridge-feedback";
+    result.textContent = "Connexion au flux F1…";
+    stream = new EventSource(url);
+    stream.onmessage = event=>{
+      const data = JSON.parse(event.data);
+      if (data.type === "ready"){
+        const lap = data.current_lap ? ` (tour ${data.current_lap}/${data.total_laps || "?"})` : "";
+        result.textContent = `En attente du signal F1${lap}…`;
+      }else if (data.type === markerType){
+        receivedAt = performance.now();
+        label = data.lap ? `tour ${data.lap}/${data.total_laps || "?"}` : markerLabel;
+        result.textContent = `Signal API reçu : ${label}. Clique au moment où tu le vois à la TV.`;
+        seen.disabled = false;
+        closeStream();
+      }else if (data.type === "error"){
+        reset();
+        result.textContent = data.message;
+        result.className = "bridge-feedback error";
+      }
+    };
+    stream.onerror = ()=>{
+      if (!stream) return;
+      reset();
+      result.textContent = "Connexion F1 interrompue. Vérifie que make web est relancé et que la séance est active.";
+      result.className = "bridge-feedback error";
+    };
+  };
+  cancel.onclick = ()=>{
+    reset();
+    result.textContent = "Attente annulée.";
+  };
+  seen.onclick = ()=>{
+    if (receivedAt === null) return;
+    candidate = Math.round((performance.now() - receivedAt) / 10) / 100;
+    seen.disabled = true;
+    apply.disabled = false;
+    cancel.disabled = true;
+    watch.disabled = false;
+    result.textContent = `${label} : retard TV estimé à ${candidate.toFixed(2)} s. Vérifie la valeur avant de l’enregistrer.`;
+    result.className = "bridge-feedback success";
+  };
+  apply.onclick = async ()=>{
+    if (candidate === null) return;
+    apply.disabled = true;
+    if (await setOffset(candidate)){
+      result.textContent += isRunning ? " Offset enregistré : redémarre Live pour l’appliquer." : " Offset enregistré.";
+    }else{
+      apply.disabled = false;
+      result.textContent = "Enregistrement impossible. Réessaie.";
+      result.className = "bridge-feedback error";
+    }
+  };
+}
+
+setupEventCalibration("start", "/api/sync/start-stream", "start", "départ F1");
+setupEventCalibration("lap", "/api/sync/lap-stream", "lap", "nouveau tour");
+
 // --- SSE (temps réel) ---
+async function refreshFeedStatus(){
+  try{
+    const status = await (await fetch("/api/status")).json();
+    updateFeedStatus(status.feed);
+  }catch(_){
+    stFeed.textContent = "serveur inaccessible";
+  }
+}
+setInterval(refreshFeedStatus, 5000);
 try{
   const ev = new EventSource("/api/events");
 
@@ -584,6 +966,7 @@ try{
       stMode.textContent    = st.mode || (st.running ? "running" : "idle");
       stFlag.textContent    = st.last_flag || "—";
       stStarted.textContent = st.started_at ? fmtTime(st.started_at) : "—";
+      updateFeedStatus(st.feed);
     }catch(e){}
   };
 
@@ -597,10 +980,6 @@ try{
     } else if (data.type === "flag"){
       stFlag.textContent = data.flag;
       addLog(`FLAG: ${data.flag}`, "flag");
-      if (calWaiting){
-        calLastEventTs = performance.now();
-        calState.textContent = "État: visible ? clique “Je le vois maintenant”";
-      }
     } else if (data.type === "baseline"){
       stBase.textContent = `captured ${data.captured}`;
       addLog(`Baseline capturée (${data.captured} lampes)`, "");
@@ -617,6 +996,7 @@ try{
       addLog(`STOPPED`, "");
     } else if (data.type === "error"){
       addLog(`ERROR: ${data.message}`, "err");
+      updateRunUI({running:false});
       stMode.textContent = "error";
     } else if (data.type === "sync_group"){
       addLog(`LightGroup sync id=${data.group_id} (lampes=${data.size})`, "");

@@ -1,3 +1,4 @@
 requests>=2.32
 PyYAML>=6.0
-Flask
+Flask>=3.0
+signalrcore>=1.0.2,<2

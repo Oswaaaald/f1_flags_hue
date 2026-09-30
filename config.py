@@ -67,6 +67,7 @@ def ensure_conf() -> dict:
 
     # 1) config.yml présent → on le lit tel quel
     if os.path.exists(CONF_PATH):
+        os.chmod(CONF_PATH, 0o600)
         conf = _load_yaml(CONF_PATH)
         _normalize_conf_in_place(conf)
         return conf
@@ -75,6 +76,7 @@ def ensure_conf() -> dict:
     for ex in EXAMPLES:
         if os.path.exists(ex):
             shutil.copyfile(ex, CONF_PATH)
+            os.chmod(CONF_PATH, 0o600)
             print(f"[CONF] Copié {ex} -> {CONF_PATH}")
             conf = _load_yaml(CONF_PATH)
             _normalize_conf_in_place(conf)
@@ -93,6 +95,7 @@ def ensure_conf() -> dict:
 def save_conf(conf: dict):
     with open(CONF_PATH, "w") as f:
         yaml.safe_dump(conf, f, sort_keys=False)
+    os.chmod(CONF_PATH, 0o600)
 
 
 def selection_missing(conf: dict) -> bool:

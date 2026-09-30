@@ -27,6 +27,7 @@
     <div class="row">
       <span id="bridgeHint" class="hint">Appuyer sur le bouton du Hue Bridge puis cliquer sur « Lier ».</span>
     </div>
+    <div id="bridgeFeedback" class="bridge-feedback" role="status" aria-live="polite"></div>
 
     <div class="row">
       <label class="w120">Username</label>
@@ -138,6 +139,8 @@
       <button id="offSetBtn" class="btn">Enregistrer</button>
     </div>
 
+    <div class="calibration-workspace">
+      <div class="calibration-controls">
     <div class="section-title">Calibration</div>
     <div class="cal-layout">
       <div class="cal-col left">
@@ -152,9 +155,74 @@
         <span id="calState" class="chip info chip-wide">État: idle</span>
       </div>
     </div>
+
+    <div class="section-title">Comparer le chrono de la TV au flux F1</div>
+    <p class="hint">Entre une valeur à venir du temps restant (ex. 12:30), puis clique sur « Comparer » au moment où la TV affiche cette valeur. Précision d’environ une seconde.</p>
+    <div class="row wrap">
+      <label for="tvClockInput">Temps TV</label>
+      <input id="tvClockInput" class="input" inputmode="numeric" placeholder="MM:SS" aria-label="Temps restant affiché à la TV" />
+      <button id="clockCompare" class="btn ghost">Comparer avec l’API</button>
+      <button id="clockApply" class="btn" disabled>Enregistrer cet offset</button>
+    </div>
+    <div id="clockResult" class="bridge-feedback" role="status" aria-live="polite"></div>
+
+    <div class="section-title">Calibration course : départ</div>
+    <p class="hint">Avant le départ d’une course ou d’un sprint, lance l’attente. Quand le flux F1 annonce « Started », puis que tu vois les feux s’éteindre et les voitures partir à la TV, clique sur « Je vois le départ ». Ce signal F1 est proche du départ, mais ne représente pas une mesure officielle des feux.</p>
+    <div class="row wrap">
+      <button id="startWatch" class="btn ghost">Attendre le départ F1</button>
+      <button id="startCancel" class="btn ghost" disabled>Annuler</button>
+      <button id="startSeen" class="btn" disabled>Je vois le départ</button>
+      <button id="startApply" class="btn" disabled>Enregistrer cet offset</button>
+    </div>
+    <div id="startResult" class="bridge-feedback" role="status" aria-live="polite"></div>
+
+    <div class="section-title">Calibration course : compteur de tours</div>
+    <p class="hint">En course ou en sprint, attends le prochain changement de tour reçu par l’API. Clique sur « Je vois ce tour » quand le même numéro apparaît sur la TV.</p>
+    <div class="row wrap">
+      <button id="lapStart" class="btn ghost">Attendre le prochain tour API</button>
+      <button id="lapCancel" class="btn ghost" disabled>Annuler</button>
+      <button id="lapSeen" class="btn" disabled>Je vois ce tour sur la TV</button>
+      <button id="lapApply" class="btn" disabled>Enregistrer cet offset</button>
+    </div>
+    <div id="lapResult" class="bridge-feedback" role="status" aria-live="polite"></div>
+      </div>
+      <aside class="calibration-log" aria-label="Journal de calibration">
+        <h3>Journal en direct</h3>
+        <p class="hint">Les messages reçus s’affichent ici pendant la calibration.</p>
+        <div id="log" class="log" role="log" aria-live="polite" aria-relevant="additions"></div>
+        <div class="flag-history-heading">
+          <h3>Drapeaux F1 reçus</h3>
+          <button id="flagHistoryRefresh" class="btn ghost" type="button">Actualiser</button>
+        </div>
+        <p class="hint">Historique local du flux direct. « Réception » est l’heure de ce Mac ; l’heure F1 apparaît si le message la fournit.</p>
+        <div id="flagHistory" class="flag-history" aria-label="Historique des drapeaux F1"></div>
+        <div id="flagHistoryStatus" class="hint" role="status"></div>
+      </aside>
+    </div>
   </section>
 
-  <!-- STATUS & LOG -->
+  <section class="card">
+    <h2>Rejouer des drapeaux F1</h2>
+    <p class="hint">Choisis une séance passée de l’archive Formula 1 ou une séance enregistrée sur ce Mac. Le replay commande les lampes Hue et restaure leur état à la fin. Une archive nécessite Internet ; un enregistrement local fonctionne hors connexion.</p>
+    <div class="row wrap">
+      <select id="replaySession" class="input" aria-label="Séance à rejouer"></select>
+      <label for="replaySpeed">Temps entre les drapeaux</label>
+      <select id="replaySpeed" class="input">
+        <option value="1">Réel (×1)</option>
+        <option value="5">5 fois plus rapide (×5)</option>
+        <option value="10" selected>10 fois plus rapide (×10)</option>
+        <option value="30">30 fois plus rapide (×30)</option>
+        <option value="60">60 fois plus rapide (×60)</option>
+      </select>
+      <button id="replayRefresh" class="btn ghost">Actualiser</button>
+      <button id="replayStart" class="btn">Rejouer sur les lampes</button>
+    </div>
+    <p id="replayDescription" class="hint"></p>
+    <p id="replaySpeedHelp" class="hint"></p>
+    <div id="replayResult" class="bridge-feedback" role="status" aria-live="polite"></div>
+  </section>
+
+  <!-- STATUS -->
   <section class="card">
     <h2>Statut</h2>
     <div class="status">
@@ -163,8 +231,11 @@
       <div><b>Démarré:</b> <span id="stStarted">—</span></div>
       <div><b>Baseline:</b> <span id="stBase">—</span></div>
       <div><b>Sync offset:</b> <span id="stOff">—</span></div>
+      <div><b>Flux F1:</b> <span id="stFeed">—</span></div>
+      <div><b>Séance F1:</b> <span id="stSession">—</span></div>
+      <div><b>Tour:</b> <span id="stLap">—</span></div>
+      <div><b>Dernière donnée:</b> <span id="stFeedTime">—</span></div>
     </div>
-    <div id="log" class="log"></div>
   </section>
 
 </main>
