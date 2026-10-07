@@ -1,6 +1,5 @@
 import tempfile
 import threading
-import time
 import unittest
 from pathlib import Path
 from unittest.mock import Mock
@@ -87,10 +86,13 @@ class JournalAndRulesTests(unittest.TestCase):
     def test_replay_uses_recorded_spacing(self):
         events = [LiveEvent(kind="flag", value="GREEN", received_at=100.0),
                   LiveEvent(kind="flag", value="RED", received_at=100.04)]
-        started = time.monotonic()
-        self.assertEqual([event.value for event in replay_events(events, 2, threading.Event())],
+        stop = Mock()
+        stop.is_set.return_value = False
+        stop.wait.return_value = False
+        self.assertEqual([event.value for event in replay_events(events, 2, stop)],
                          ["GREEN", "RED"])
-        self.assertGreaterEqual(time.monotonic() - started, 0.015)
+        stop.wait.assert_called_once()
+        self.assertAlmostEqual(stop.wait.call_args.args[0], 0.02)
 
     def test_group_selection_remains_in_configuration(self):
         bridge = Mock()
