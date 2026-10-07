@@ -20,7 +20,17 @@ Les applications Mac et Windows utilisent maintenant une preuve privée du lance
 
 Sur une instance simulée séparée, le navigateur a été ouvert par ticket, puis déconnecté. L’adresse ne conserve pas le ticket et l’écran de déconnexion propose de rouvrir l’application, sans formulaire de mot de passe. L’ouverture du lanceur réellement installé a ensuite affiché directement le tableau de bord dans Firefox avec la version preview.7, la sélection Hue et la calibration existantes.
 
-Les tests vérifient notamment le refus des clients anonymes, des tickets expirés ou réutilisés, des mauvaises origines et des Host non canoniques ; les permissions du fichier privé, l’expiration des sessions de bureau, l’invalidation au redémarrage, la déconnexion et la conservation du mode serveur. Aucun test d’effet n’a commandé le pont réel pendant cette passe. La compilation du lanceur Windows depuis Mac ne constitue pas une vérification de son installation interactive.
+Les tests vérifient notamment le refus des clients anonymes, des tickets expirés ou réutilisés, des mauvaises origines et des Host non canoniques ; les permissions du fichier privé, le cookie de session de huit heures, l’invalidation au redémarrage, la déconnexion et la conservation du mode serveur. Aucun test d’effet n’a commandé le pont réel pendant cette passe. La compilation du lanceur Windows depuis Mac ne constitue pas une vérification de son installation interactive.
+
+### GitHub Actions et publication de la preview.7
+
+Les workflows du commit `04346e8` ont terminé avec succès le 7 octobre 2026 :
+
+- [Verify sur main](https://github.com/Oswaaaald/f1_flags_hue/actions/runs/37662334919) et [Verify sur le tag](https://github.com/Oswaaaald/f1_flags_hue/actions/runs/37662334315) : contrôles réussis sur Mac, Windows et Linux, dont 127 contrôles C#, 20 contrôles HTTP existants et 17 contrôles de connexion automatique par système.
+- [Build installers](https://github.com/Oswaaaald/f1_flags_hue/actions/runs/37662334799) : six paquets Mac ARM64/Intel, Windows x64/ARM64 et Linux x64/ARM64 construits sur leurs systèmes natifs. Chaque service empaqueté passe les 20 contrôles HTTP existants, les 17 contrôles de connexion automatique et la vérification de version et d’absence de fichiers privés. Les deux installateurs Windows et l’image Docker multiarchitecture sont construits avec succès.
+- [Release v2.0.0-preview.7](https://github.com/Oswaaaald/f1_flags_hue/releases/tag/v2.0.0-preview.7) : publiée avec les dix fichiers attendus, dont les installateurs, les archives portables, l’image Docker et les sommes SHA-256. Les fichiers sont tous marqués comme téléversés.
+
+Ces contrôles ne vérifient pas l’installation interactive Windows, la notarisation Apple ni le rendu physique des lampes.
 
 ## Preview.6 : audit précédent
 
