@@ -8,6 +8,7 @@ public sealed class HueOutput(HueClient client, Store store, TimeProvider? time 
     public event Action<Exception>? Failed;
     private Dictionary<string, JsonElement> _baseline = [];
     private HueNativePulse? _pulse;
+    private HueGroupTarget? _solidTarget;
     private string?[] _legacyLights = [];
     public async Task CaptureAsync(AppSettings settings, CancellationToken ct)
     {
@@ -18,6 +19,7 @@ public sealed class HueOutput(HueClient client, Store store, TimeProvider? time 
         // when the user changed the selection while idle.
         _baseline = [];
         _legacyLights = [];
+        _solidTarget = null;
         var lights = await client.RequestAsync(HttpMethod.Get, "/light", null, ct);
         var selected = lights.EnumerateArray().Where(l => settings.LightIds.Contains(l.GetProperty("id").GetString()!)).ToArray();
         if (selected.Length != settings.LightIds.Length || selected.Length == 0 || selected.Any(l => !l.TryGetProperty("color", out _)))
@@ -48,16 +50,18 @@ public sealed class HueOutput(HueClient client, Store store, TimeProvider? time 
             await _pulse.StartAsync(_legacyLights.Select(HueNativePulse.LightId).ToArray(), flag, effect, settings, ct);
             return;
         }
-        foreach (var id in settings.LightIds)
+        if (settings.LightIds.Length > 1)
         {
-            var body = new Dictionary<string, object>
-            {
-                ["on"] = new { on = true }, ["dimming"] = new { brightness = settings.Brightness / 254.0 * 100 },
-                ["color"] = new { xy = new { x = effect.X, y = effect.Y } }, ["dynamics"] = new { duration = (int)(settings.TransitionSeconds * 1000) },
-            };
-            await client.PutLightAsync(id, body, ct);
-            if (settings.LightIds.Length > 1) await Task.Delay(100, ct); // Respect the local REST bridge rate.
+            _solidTarget ??= await HueGroupTarget.ResolveAsync(client, _legacyLights.Select(HueGroupTarget.LightId).ToArray(), ct);
+            await _solidTarget.WriteAsync(new { on = true, bri = settings.Brightness, xy = new[] { effect.X, effect.Y },
+                transitiontime = (int)Math.Round(settings.TransitionSeconds * 10), alert = "none" }, ct);
+            return;
         }
+        await client.PutLightAsync(settings.LightIds.Single(), new
+        {
+            on = new { on = true }, dimming = new { brightness = settings.Brightness / 254.0 * 100 },
+            color = new { xy = new { x = effect.X, y = effect.Y } }, dynamics = new { duration = (int)(settings.TransitionSeconds * 1000) },
+        }, ct);
     }
     public async Task EndAnimationAsync(CancellationToken ct)
     {

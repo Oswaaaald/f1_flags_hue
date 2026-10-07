@@ -25,6 +25,8 @@ Ouvre le fichier téléchargé et suis les étapes de l’installation.
 
 Tes réglages et ta liaison Hue sont conservés lors d’une mise à jour.
 
+Les couleurs des drapeaux sont envoyées en une seule commande au groupe exact des lampes choisies, avec le fondu configuré. L’application n’ajoute plus de pause entre chaque lampe pour ces changements de couleur.
+
 Les applications Mac et Windows te connectent automatiquement à l’interface, sans mot de passe à créer. Utilise leur menu **Ouvrir F1 Hue Sync** pour te reconnecter. Les installations réseau, Linux et Docker gardent la connexion par mot de passe.
 
 Sur Mac, le trousseau peut demander séparément l’accès à **F1Hue.Vault**, qui protège la liaison à ton pont Hue.

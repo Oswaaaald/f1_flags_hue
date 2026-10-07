@@ -29,7 +29,8 @@ static class NativePulseTests
                     "Native pulse applies the selected color and brightness to the synchronized group");
                 await engine.PlayAsync(RaceFlag.RED, settings);
                 var calls = bridge.Calls.ToArray();
-                var red = Array.FindIndex(calls, c => c.Path.StartsWith("clip/v2/resource/light/") && c.Body.Contains("dynamics"));
+                var red = Array.FindIndex(calls, c => c.Path == "groups/7/action" && c.Body.Contains("xy")
+                    && JsonSerializer.Deserialize<JsonElement>(c.Body).GetProperty("xy")[0].GetDouble() == settings.Effects[RaceFlag.RED].X);
                 check(red >= 0 && calls.Take(red).Any(c => c.Path == "lights/1/state" && c.Body.Contains("none"))
                     && calls.Take(red).Any(c => c.Path == "lights/2/state" && c.Body.Contains("none")),
                     "Changing to red cancels the native pulse on each chosen lamp before changing color");

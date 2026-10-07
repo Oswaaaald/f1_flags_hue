@@ -2,6 +2,17 @@
 
 Dernière vérification locale : 7 octobre 2026.
 
+## Preview.8 : changements de couleur groupés
+
+Les couleurs fixes de plusieurs lampes sont envoyées par une seule commande au groupe Hue contenant exactement la sélection. La boucle de commandes individuelles et sa pause de 100 ms ont été supprimées. Le groupe est réutilisé ou créé sans modifier une pièce existante ; sa composition est vérifiée avant chaque commande. Le même adaptateur est utilisé par le direct, les aperçus, la séquence et le replay.
+
+- Compilation .NET : réussie, aucun avertissement ni erreur. TypeScript strict et esbuild : réussis.
+- 139 contrôles C# réussis, dont 12 nouveaux contrôles sur les couleurs groupées : cinq couleurs fixes, luminosité et fondu, réutilisation et création du groupe exact, groupe modifié, erreurs du pont, durée fixe, restauration et sélection d’une lampe unique.
+- 20 contrôles HTTP existants et 17 contrôles de connexion automatique réussis, également sur le service inclus dans le paquet Mac ARM64.
+- Paquet Mac ARM64 construit ; vérification de version, d’absence de fichiers privés et de signature locale réussie.
+
+Les tests utilisent un pont simulé et contrôlent les requêtes effectivement envoyées. Ils ne mesurent pas le décalage physique entre les ampoules ni le temps de propagation Zigbee. La restauration conserve les états individuels des lampes choisies.
+
 ## Preview.7 : connexion automatique des applications de bureau
 
 Les applications Mac et Windows utilisent maintenant une preuve privée du lanceur pour ouvrir une session locale. Aucun mot de passe n’est demandé dans leur interface. Les installations serveur, Linux et Docker conservent l’authentification par mot de passe. Le coffre Hue et un éventuel ancien mot de passe serveur restent conservés.
