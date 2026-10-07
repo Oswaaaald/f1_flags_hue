@@ -85,15 +85,18 @@ class SettingsTests(unittest.TestCase):
 
     def test_disabled_event_clears_previous_effect_after_offset(self):
         conf = sample_conf()
+        current = [conf]
         output = Mock()
         event = LiveEvent(kind="flag", value="GREEN", received_mono=time.monotonic())
-        worker = threading.Thread(target=play_effects,
-                                  args=(iter([event]), output, conf, threading.Event()),
-                                  kwargs={"offset_seconds": .06, "conf_provider": lambda: conf})
-        worker.start()
-        time.sleep(.02)
-        conf["flags"]["enabled"] = {"GREEN": False}
-        worker.join(timeout=1)
+        stop = threading.Event()
+
+        def finish_delay(seconds):
+            current[0] = apply_settings_patch(conf, {"effects": {"GREEN": {"enabled": False}}})
+            return False
+
+        with patch.object(stop, "wait", side_effect=finish_delay):
+            play_effects(iter([event]), output, conf, stop, offset_seconds=.06,
+                         conf_provider=lambda: current[0])
         output.clear.assert_called_once()
         output.play.assert_not_called()
 
@@ -119,22 +122,41 @@ class EngineTests(unittest.TestCase):
 
     def test_timed_effect_restores_selected_baseline(self):
         bridge, baseline = Mock(), Mock()
+        restored = threading.Event()
+        baseline.restore.side_effect = lambda *args, **kwargs: restored.set()
         engine = LightEngine(bridge, self.conf(), threading.Event(), baseline=baseline)
         engine.start()
-        engine.play("GREEN")
-        time.sleep(.12)
-        engine.stop()
+        try:
+            engine.play("GREEN")
+            self.assertTrue(restored.wait(2), "The timed effect must restore its baseline")
+        finally:
+            engine.stop()
         baseline.restore.assert_called_once()
 
     def test_new_effect_prevents_stale_restore(self):
         bridge, baseline = Mock(), Mock()
-        engine = LightEngine(bridge, self.conf(), threading.Event(), baseline=baseline)
-        engine.start()
-        engine.play("GREEN")
-        time.sleep(.015)
-        engine.play("RED")
-        time.sleep(.11)
-        engine.stop()
+        green_waiting, release_green, red_applied = (threading.Event() for _ in range(3))
+        engine = LightEngine(bridge, self.conf(), threading.Event(), baseline=baseline,
+                             on_state=lambda name: red_applied.set() if name == "RED" else None)
+        original_wait = engine._wait
+
+        def wait(cancel, seconds):
+            if seconds == .05:
+                green_waiting.set()
+                release_green.wait(2)
+            return original_wait(cancel, seconds)
+
+        with patch.object(engine, "_wait", side_effect=wait):
+            engine.start()
+            try:
+                engine.play("GREEN")
+                self.assertTrue(green_waiting.wait(2), "Green must start before it is replaced")
+                engine.play("RED")
+                release_green.set()
+                self.assertTrue(red_applied.wait(2), "Red must replace the cancelled green")
+            finally:
+                release_green.set()
+                engine.stop()
         baseline.restore.assert_not_called()
         colors = [call.args[0].get("xy") for call in bridge.set_state.call_args_list if "xy" in call.args[0]]
         self.assertEqual(colors[-1], [0.6, 0.3])

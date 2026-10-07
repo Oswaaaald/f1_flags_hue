@@ -89,6 +89,7 @@ class WebSecurityTests(unittest.TestCase):
         self.assertEqual(response.status_code, 413)
         save.assert_not_called()
 
+    @unittest.skipIf(os.name == "nt", "Windows chmod does not expose POSIX permission bits")
     def test_local_state_files_are_private_after_save(self):
         with tempfile.TemporaryDirectory() as directory:
             baseline = BaselineStore(directory, {"baseline": {"persist_path": "baseline.json"}})

@@ -38,6 +38,8 @@ Dernière vérification locale : 7 octobre 2026.
 
 Les 13 contrôles consacrés au moteur Entertainment supprimé ont été retirés. Les autres contrôles existants ont été conservés et complétés par les reproductions de l’audit.
 
+Les tests Python de restauration et de remplacement attendent désormais des événements explicites. Le calcul de l’espacement utilise une horloge contrôlée pour éviter de mesurer l’ordonnanceur du runner. Le contrôle des permissions POSIX est exécuté sur Mac/Linux et ignoré sous Windows, où `chmod` n’expose pas ces bits. Les autres tests restent exécutés sur les trois systèmes. Git conserve les fins de ligne LF sur tous les systèmes pour le contrôle Prettier.
+
 Dans Firefox, les vues Direct, Hue, Tests et Drapeaux ont été ouvertes sur une instance simulée séparée. Un aperçu Safety Car a été lancé puis arrêté ; les boutons sont redevenus disponibles. Le compte, les lampes et les événements de ces tests sont jetables. L’application installée a ensuite été vérifiée en lecture seule sur bureau et en vue adaptative de 402 pixels : Direct, Calibration TV et Drapeaux sont lisibles ; Stop, la navigation et la déconnexion restent accessibles. Ses réglages n’ont pas été modifiés par ces contrôles.
 
 ## Portée des résultats
