@@ -4,7 +4,7 @@ using Microsoft.Win32;
 
 ApplicationConfiguration.Initialize();
 using var mutex = new Mutex(true, "Local\\F1HueDesktop", out var first);
-if (!first) { Process.Start(new ProcessStartInfo("http://127.0.0.1:8081") { UseShellExecute = true }); return; }
+if (!first) { DesktopBrowser.Open().GetAwaiter().GetResult(); return; }
 Application.Run(new TrayApplication(args.Contains("--background")));
 
 sealed class TrayApplication : ApplicationContext
@@ -48,7 +48,7 @@ sealed class TrayApplication : ApplicationContext
         if (File.Exists(logFile) && new FileInfo(logFile).Length > 2_000_000) File.Delete(logFile);
         _log = new StreamWriter(new FileStream(logFile, FileMode.Append, FileAccess.Write, FileShare.ReadWrite)) { AutoFlush = true };
         var info = new ProcessStartInfo(Path.Combine(AppContext.BaseDirectory, "service", "f1-hue.exe")) { CreateNoWindow = true, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
-        foreach (var argument in new[] { "--data", _data, "--port", "8081" }) info.ArgumentList.Add(argument);
+        foreach (var argument in new[] { "--desktop", "--listen", "127.0.0.1", "--data", _data, "--port", "8081" }) info.ArgumentList.Add(argument);
         if (import is not null) { info.ArgumentList.Add("--import"); info.ArgumentList.Add(import); }
         _service = new Process { StartInfo = info };
         _service.OutputDataReceived += (_, e) => Log(e.Data); _service.ErrorDataReceived += (_, e) => Log(e.Data);
@@ -76,7 +76,7 @@ sealed class TrayApplication : ApplicationContext
         using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(1) };
         for (var i = 0; i < 20; i++)
         {
-            try { var response = await http.GetStringAsync(_url + "/health"); if (JsonDocument.Parse(response).RootElement.GetProperty("status").GetString() == "ok") { Open(); return; } }
+            try { var response = await http.GetStringAsync(_url + "/health"); if (JsonDocument.Parse(response).RootElement.GetProperty("status").GetString() == "ok") { await DesktopBrowser.Open(); return; } }
             catch (Exception e) when (e is HttpRequestException or TaskCanceledException) { }
             await Task.Delay(500);
         }
@@ -84,8 +84,7 @@ sealed class TrayApplication : ApplicationContext
     }
     private void Open()
     {
-        var setup = Path.Combine(_data, "setup-code.txt");
-        Process.Start(new ProcessStartInfo(_url + (File.Exists(setup) ? "/#setup=" + Uri.EscapeDataString(File.ReadAllText(setup).Trim()) : "")) { UseShellExecute = true });
+        _ = DesktopBrowser.Open();
     }
     private static bool IsAutoStart() { using var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run"); return key?.GetValue("F1Hue") is not null; }
     private void ToggleLogin()
@@ -122,4 +121,28 @@ sealed class TrayApplication : ApplicationContext
         if (picker.ShowDialog() == DialogResult.OK && Stop()) { Start(picker.FileName); _ = WaitAndOpen(); }
     }
     protected override void ExitThreadCore() { if (!Stop()) return; _supervisor.Dispose(); _tray.Visible = false; _tray.Dispose(); base.ExitThreadCore(); }
+}
+
+static class DesktopBrowser
+{
+    public static async Task Open()
+    {
+        try
+        {
+            var data = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "F1Hue");
+            var secret = (await File.ReadAllTextAsync(Path.Combine(data, "desktop-launch.key")).ConfigureAwait(false)).Trim();
+            if (secret.Length != 64) throw new InvalidOperationException();
+            using var http = new HttpClient(new HttpClientHandler { UseProxy = false, AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(5) };
+            using var request = new HttpRequestMessage(HttpMethod.Post, "http://127.0.0.1:8081/api/auth/desktop/ticket");
+            request.Headers.Add("X-F1Hue-Request", "1"); request.Headers.Add("X-F1Hue-Launcher", secret);
+            using var response = await http.SendAsync(request).ConfigureAwait(false);
+            response.EnsureSuccessStatusCode();
+            using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync().ConfigureAwait(false));
+            var ticket = json.RootElement.GetProperty("ticket").GetString();
+            if (ticket is not { Length: 64 }) throw new InvalidOperationException();
+            Process.Start(new ProcessStartInfo("http://127.0.0.1:8081/#desktop=" + Uri.EscapeDataString(ticket)) { UseShellExecute = true });
+        }
+        catch (Exception e) when (e is IOException or HttpRequestException or TaskCanceledException or InvalidOperationException or JsonException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+        { MessageBox.Show("Impossible d’ouvrir l’interface. Vérifie que le service F1 Hue Sync est lancé puis réessaie depuis son menu.", "F1 Hue Sync"); }
+    }
 }

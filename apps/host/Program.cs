@@ -26,13 +26,18 @@ if (args.Contains("--check-live"))
     Console.WriteLine(JsonSerializer.Serialize(new { connected = success, diagnosticFeed.State.SessionName, diagnosticFeed.State.SessionStatus, diagnosticFeed.State.LastDataAt, diagnosticFeed.State.LastError }, JsonDefaults.Options));
     Environment.ExitCode = success ? 0 : 1; return;
 }
+var desktopMode = args.Contains("--desktop");
+var listen = Option("--listen") ?? Environment.GetEnvironmentVariable("F1_HUE_LISTEN") ?? "127.0.0.1";
+if (!IPAddress.TryParse(listen, out _)) throw new ArgumentException("--listen attend une adresse IP.");
+if (desktopMode && listen != "127.0.0.1") { Console.Error.WriteLine("La connexion automatique de bureau exige --listen 127.0.0.1."); Environment.ExitCode = 2; return; }
 var data = Option("--data") ?? Environment.GetEnvironmentVariable("F1_HUE_DATA_DIR") ?? PrivateFiles.DefaultDataPath;
 Store ownedStore;
 try { ownedStore = new Store(data); }
 catch (InvalidOperationException e) { Console.Error.WriteLine(e.Message); Environment.ExitCode = 2; return; }
 using var store = ownedStore;
 var vault = new SecretVault(store.DirectoryPath);
-var auth = new Auth(store);
+using var desktopAccess = desktopMode ? new DesktopAccess(store.DirectoryPath) : null;
+var auth = new Auth(store, desktopAccess);
 if (args.Contains("--reset-password")) { auth.Reset(); Console.WriteLine("Accès réinitialisé. Code de configuration : " + auth.SetupFile); return; }
 if (Option("--import") is string legacy) Console.WriteLine(LegacyImport.Import(legacy, store, vault) ? "Configuration existante importée." : "Configuration déjà présente : import ignoré.");
 var simulate = args.Contains("--simulate");
@@ -58,8 +63,6 @@ var initializing = true;
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions { Args = [], ContentRootPath = AppContext.BaseDirectory, WebRootPath = Path.Combine(AppContext.BaseDirectory, "wwwroot") });
 builder.Logging.ClearProviders(); builder.Logging.AddSimpleConsole(o => o.SingleLine = true); builder.Logging.SetMinimumLevel(LogLevel.Warning);
 builder.WebHost.ConfigureKestrel(o => { o.Limits.MaxRequestBodySize = 65536; o.AddServerHeader = false; });
-var listen = Option("--listen") ?? Environment.GetEnvironmentVariable("F1_HUE_LISTEN") ?? "127.0.0.1";
-if (!IPAddress.TryParse(listen, out _)) throw new ArgumentException("--listen attend une adresse IP.");
 var port = int.Parse(Option("--port") ?? Environment.GetEnvironmentVariable("F1_HUE_PORT") ?? "8080", System.Globalization.CultureInfo.InvariantCulture);
 if (port is < 1 or > 65535) throw new ArgumentException("Port invalide.");
 var certificate = Environment.GetEnvironmentVariable("F1_HUE_TLS_CERT");
@@ -78,7 +81,7 @@ feed.Changed += Changed; runner.Changed += Changed; calibration.Changed += Chang
 object State() => new { feed = feed.State, runner = runner.State, initializing, calibration = calibration.State, settings = store.Read(), hue = simulate ? (object)new { linked = true, ip = "simulation", name = "Pont de démonstration", entertainment = false } : hue.Status, journal = store.Events(limit: 60), sessions = store.Sessions(), simulation = simulate, serverUtc = DateTimeOffset.UtcNow, version };
 void Idle() { if (runner.State.Running || runner.State.CleanupPending) throw new InvalidOperationException("Termine l’arrêt des lampes avant de modifier le pont ou la sélection."); }
 string Text(JsonElement body, string name) => body.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString()! : throw new ArgumentException("Champ requis : " + name);
-void Cookie(HttpContext ctx, string token) => ctx.Response.Cookies.Append("f1hue_session", token, new CookieOptions { HttpOnly = true, SameSite = SameSiteMode.Strict, Secure = ctx.Request.IsHttps, MaxAge = TimeSpan.FromDays(30), Path = "/", IsEssential = true });
+void Cookie(HttpContext ctx, string token) => ctx.Response.Cookies.Append("f1hue_session", token, new CookieOptions { HttpOnly = true, SameSite = SameSiteMode.Strict, Secure = ctx.Request.IsHttps, MaxAge = auth.Desktop ? TimeSpan.FromHours(8) : TimeSpan.FromDays(30), Path = "/", IsEssential = true });
 var configuredHosts = (Environment.GetEnvironmentVariable("F1_HUE_ALLOWED_HOSTS") ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 app.Use(async (ctx, next) =>
 {
@@ -90,6 +93,7 @@ app.Use(async (ctx, next) =>
     else if (!Path.HasExtension(ctx.Request.Path) || ctx.Request.Path.Value?.EndsWith(".html", StringComparison.OrdinalIgnoreCase) == true)
         ctx.Response.Headers.CacheControl = "no-cache";
     var host = ctx.Request.Host.Host;
+    if (desktopMode && (host != "127.0.0.1" || ctx.Request.Host.Port != port || ctx.Connection.RemoteIpAddress is not { } remote || !IPAddress.IsLoopback(remote))) { ctx.Response.StatusCode = 403; return; }
     if (!(host == "localhost" || IPAddress.TryParse(host, out _) || configuredHosts.Contains(host, StringComparer.OrdinalIgnoreCase))) { ctx.Response.StatusCode = 403; return; }
     var origin = ctx.Request.Headers.Origin.ToString();
     if (ctx.Request.Headers["Sec-Fetch-Site"] == "cross-site" || origin.Length > 0 && origin != $"{ctx.Request.Scheme}://{ctx.Request.Host}") { ctx.Response.StatusCode = 403; return; }
@@ -129,9 +133,17 @@ api.AddEndpointFilter(async (context, next) =>
     return await commands.RunAsync(async _ => await next(context), ct);
 });
 app.MapGet("/health", () => Results.Ok(new { status = "ok", ready = !initializing, version }));
-api.MapGet("/auth/status", (HttpContext ctx) => new { setupRequired = auth.SetupRequired, authenticated = auth.Valid(ctx.Request.Cookies["f1hue_session"]) });
-api.MapPost("/auth/setup", (JsonElement body, HttpContext ctx) => { auth.Setup(Text(body, "code"), Text(body, "password")); Cookie(ctx, auth.CreateSession()); return Results.Ok(new { ok = true }); });
-api.MapPost("/auth/login", (JsonElement body, HttpContext ctx) => { auth.Login(Text(body, "password")); Cookie(ctx, auth.CreateSession()); return Results.Ok(new { ok = true }); });
+api.MapGet("/auth/status", (HttpContext ctx) => new { mode = auth.Desktop ? "desktop" : "password", setupRequired = auth.SetupRequired, authenticated = auth.Valid(ctx.Request.Cookies["f1hue_session"]) });
+if (desktopAccess is not null)
+{
+    api.MapPost("/auth/desktop/ticket", (HttpContext ctx) => Results.Ok(new { ticket = desktopAccess.CreateTicket(ctx.Request.Headers["X-F1Hue-Launcher"].ToString()) }));
+    api.MapPost("/auth/desktop/login", (JsonElement body, HttpContext ctx) => { desktopAccess.ConsumeTicket(Text(body, "ticket")); Cookie(ctx, auth.CreateSession()); return Results.Ok(new { ok = true }); });
+}
+else
+{
+    api.MapPost("/auth/setup", (JsonElement body, HttpContext ctx) => { auth.Setup(Text(body, "code"), Text(body, "password")); Cookie(ctx, auth.CreateSession()); return Results.Ok(new { ok = true }); });
+    api.MapPost("/auth/login", (JsonElement body, HttpContext ctx) => { auth.Login(Text(body, "password")); Cookie(ctx, auth.CreateSession()); return Results.Ok(new { ok = true }); });
+}
 api.MapPost("/auth/logout", (HttpContext ctx) => { auth.Logout(ctx.Request.Cookies["f1hue_session"]); ctx.Response.Cookies.Delete("f1hue_session"); return Results.Ok(new { ok = true }); });
 api.MapGet("/state", () => State());
 api.MapGet("/settings", () => store.Read());

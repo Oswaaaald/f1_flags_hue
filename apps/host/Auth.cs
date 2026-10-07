@@ -6,11 +6,13 @@ namespace F1Hue.Host;
 
 public sealed record PasswordRecord(string Salt, string Hash);
 public sealed record SessionRecord(string Hash, DateTimeOffset Expires);
-public sealed class Auth(Store store)
+public sealed class Auth(Store store, DesktopAccess? desktop = null)
 {
     private readonly object _gate = new();
     private readonly Dictionary<string, Queue<DateTimeOffset>> _attempts = [];
-    public bool SetupRequired => store.Get<PasswordRecord>("password") is null;
+    private SessionRecord[] _desktopSessions = [];
+    public bool Desktop => desktop is not null;
+    public bool SetupRequired => !Desktop && store.Get<PasswordRecord>("password") is null;
     public string SetupFile => Path.Combine(store.DirectoryPath, "setup-code.txt");
     public void EnsureSetupCode()
     {
@@ -33,6 +35,7 @@ public sealed class Auth(Store store)
     private static byte[] Hash(string password, byte[] salt) => Rfc2898DeriveBytes.Pbkdf2(password, salt, 600000, HashAlgorithmName.SHA256, 32);
     public void Setup(string code, string password)
     {
+        if (Desktop) throw new InvalidOperationException("L’application de bureau utilise la connexion automatique.");
         lock (_gate)
         {
         if (!SetupRequired || !File.Exists(SetupFile) || !Equal(code, File.ReadAllText(SetupFile).Trim())) throw new UnauthorizedAccessException("Code de configuration invalide.");
@@ -43,6 +46,7 @@ public sealed class Auth(Store store)
     }
     public void Login(string password)
     {
+        if (Desktop) throw new InvalidOperationException("Ouvre l’interface depuis le menu F1 Hue Sync.");
         var record = store.Get<PasswordRecord>("password");
         if (record is null || password.Length > 256 || !CryptographicOperations.FixedTimeEquals(Hash(password, Convert.FromBase64String(record.Salt)), Convert.FromBase64String(record.Hash)))
             throw new UnauthorizedAccessException("Mot de passe incorrect.");
@@ -53,12 +57,16 @@ public sealed class Auth(Store store)
         var token = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
         lock (_gate)
         {
-            var sessions = (store.Get<SessionRecord[]>("sessions") ?? []).Where(s => s.Expires > DateTimeOffset.UtcNow).TakeLast(19).ToList();
-            sessions.Add(new(TokenHash(token), DateTimeOffset.UtcNow.AddDays(30))); store.Put("sessions", sessions);
+            var sessions = Sessions().Where(s => s.Expires > DateTimeOffset.UtcNow).TakeLast(19).ToList();
+            sessions.Add(new(TokenHash(token), DateTimeOffset.UtcNow.Add(Desktop ? TimeSpan.FromHours(8) : TimeSpan.FromDays(30))));
+            SaveSessions(sessions.ToArray());
         }
         return token;
     }
-    public bool Valid(string? token) => token is { Length: 64 } && (store.Get<SessionRecord[]>("sessions") ?? []).Any(s => s.Expires > DateTimeOffset.UtcNow && Equal(s.Hash, TokenHash(token)));
-    public void Logout(string? token) { if (token is null) return; lock (_gate) store.Put("sessions", (store.Get<SessionRecord[]>("sessions") ?? []).Where(s => !Equal(s.Hash, TokenHash(token))).ToArray()); }
+    private SessionRecord[] Sessions() => Desktop ? _desktopSessions : store.Get<SessionRecord[]>("sessions") ?? [];
+    private void SaveSessions(SessionRecord[] sessions) { if (Desktop) _desktopSessions = sessions; else store.Put("sessions", sessions); }
+    public bool Valid(string? token)
+    { lock (_gate) return token is { Length: 64 } && Sessions().Any(s => s.Expires > DateTimeOffset.UtcNow && Equal(s.Hash, TokenHash(token))); }
+    public void Logout(string? token) { if (token is null) return; lock (_gate) SaveSessions(Sessions().Where(s => !Equal(s.Hash, TokenHash(token))).ToArray()); }
     public void Reset() { store.Delete("password"); store.Delete("sessions"); EnsureSetupCode(); }
 }

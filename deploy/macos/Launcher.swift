@@ -1,5 +1,11 @@
 import Cocoa
 
+final class LocalRequestDelegate: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(nil)
+    }
+}
+
 // This menu application owns exactly one local service. Closing the browser does not stop it.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var item: NSStatusItem!
@@ -10,6 +16,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var stopping = false
     private var restartTimes: [Date] = []
     private var restartWork: DispatchWorkItem?
+    private lazy var localSession: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.connectionProxyDictionary = [:]
+        return URLSession(configuration: configuration, delegate: LocalRequestDelegate(), delegateQueue: nil)
+    }()
     private let port = 8081
     private let appPath = Bundle.main.bundlePath
     private var dataPath: URL { FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/F1Hue") }
@@ -17,8 +28,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var serverURL: URL { URL(string: "http://127.0.0.1:\(port)")! }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        if NSRunningApplication.runningApplications(withBundleIdentifier: "local.f1hue.desktop").count > 1 { NSWorkspace.shared.open(serverURL); NSApp.terminate(nil); return }
         NSApp.setActivationPolicy(.accessory)
+        if NSRunningApplication.runningApplications(withBundleIdentifier: "local.f1hue.desktop").count > 1 { openAuthenticatedInterface(terminateAfter: true); return }
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.image = NSImage(systemSymbolName: "flag.checkered", accessibilityDescription: "F1 Hue Sync")
         let menu = NSMenu()
@@ -48,7 +59,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             logHandle = try FileHandle(forWritingTo: log); try logHandle?.seekToEnd()
             let child = Process()
             child.executableURL = Bundle.main.resourceURL!.appendingPathComponent("service/f1-hue")
-            child.arguments = ["--data", dataPath.path, "--port", String(port)]
+            child.arguments = ["--desktop", "--listen", "127.0.0.1", "--data", dataPath.path, "--port", String(port)]
             let oldConfig = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("f1_flags_hue/config.yml").path
             if let path = importPath ?? (FileManager.default.fileExists(atPath: oldConfig) ? oldConfig : nil) { child.arguments! += ["--import", path] }
             child.standardOutput = logHandle; child.standardError = logHandle
@@ -85,12 +96,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }.resume()
     }
     @objc private func openInterface() {
-        var url = serverURL
-        if let code = try? String(contentsOf: dataPath.appendingPathComponent("setup-code.txt"), encoding: .utf8) {
-            var components = URLComponents(url: serverURL, resolvingAgainstBaseURL: false)!
-            components.fragment = "setup=" + code.trimmingCharacters(in: .whitespacesAndNewlines); url = components.url!
+        openAuthenticatedInterface()
+    }
+    private func openAuthenticatedInterface(terminateAfter: Bool = false) {
+        guard let secret = try? String(contentsOf: dataPath.appendingPathComponent("desktop-launch.key"), encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines), secret.count == 64 else {
+            showError("Le service n’est pas prêt. Réessaie d’ouvrir l’interface depuis le menu F1 Hue Sync.")
+            if terminateAfter { NSApp.terminate(nil) }
+            return
         }
-        NSWorkspace.shared.open(url)
+        var request = URLRequest(url: serverURL.appendingPathComponent("api/auth/desktop/ticket"))
+        request.httpMethod = "POST"; request.timeoutInterval = 5
+        request.setValue("1", forHTTPHeaderField: "X-F1Hue-Request")
+        request.setValue(secret, forHTTPHeaderField: "X-F1Hue-Launcher")
+        localSession.dataTask(with: request) { [weak self] data, response, _ in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                defer { if terminateAfter { NSApp.terminate(nil) } }
+                guard (response as? HTTPURLResponse)?.statusCode == 200, let data = data,
+                      let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let ticket = json["ticket"] as? String, ticket.count == 64 else {
+                    self.showError("Impossible d’ouvrir l’interface. Vérifie que le service F1 Hue Sync est lancé puis réessaie.")
+                    return
+                }
+                var components = URLComponents(url: self.serverURL, resolvingAgainstBaseURL: false)!
+                components.fragment = "desktop=" + ticket
+                if let url = components.url { NSWorkspace.shared.open(url) }
+            }
+        }.resume()
     }
     @objc private func openLogs() { NSWorkspace.shared.open(dataPath.appendingPathComponent("service.log")) }
     @objc private func updates() {

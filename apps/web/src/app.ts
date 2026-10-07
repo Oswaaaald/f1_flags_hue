@@ -16,9 +16,11 @@ let tab = "overview";
 let stream: EventSource | null = null;
 let toastTimer: number | undefined;
 let serverDelta = 0;
-let setupCode =
-  new URLSearchParams(location.hash.replace(/^#/, "")).get("setup") ?? "";
-if (setupCode) history.replaceState(null, "", location.pathname);
+const launchParameters = new URLSearchParams(location.hash.replace(/^#/, ""));
+let setupCode = launchParameters.get("setup") ?? "";
+let desktopTicket = launchParameters.get("desktop") ?? "";
+if (setupCode || desktopTicket)
+  history.replaceState(null, "", location.pathname);
 const media = matchMedia("(prefers-color-scheme: dark)");
 function theme() {
   const saved = localStorage.getItem("f1hue.theme") ?? "light";
@@ -44,11 +46,30 @@ async function showAuth() {
   stream?.close();
   $("#shell").hidden = true;
   $("#auth").hidden = false;
-  const auth = await api<{ setupRequired: boolean; authenticated: boolean }>(
-    "/auth/status",
-  );
+  const auth = await api<{
+    mode: "desktop" | "password";
+    setupRequired: boolean;
+    authenticated: boolean;
+  }>("/auth/status");
+  let desktopError = "";
+  if (auth.mode === "desktop" && desktopTicket) {
+    const ticket = desktopTicket;
+    desktopTicket = "";
+    try {
+      await api("/auth/desktop/login", "POST", { ticket });
+      await boot();
+      return;
+    } catch (e) {
+      desktopError = (e as Error).message;
+    }
+  }
   if (auth.authenticated) {
     await boot();
+    return;
+  }
+  if (auth.mode === "desktop") {
+    $("#auth").innerHTML =
+      `<img src="/icon.svg" alt="" width="45" height="45"><h1>Ouvre F1 Hue Sync.</h1><p>Choisis « Ouvrir F1 Hue Sync » depuis l’icône de drapeau dans la barre des menus ou la zone de notification. L’application te connecte automatiquement.</p>${desktopError ? `<div class="notice error" role="alert">${esc(desktopError)}</div>` : ""}`;
     return;
   }
   $("#auth").innerHTML =
@@ -292,6 +313,11 @@ async function boot() {
   };
   stream.onerror = () => {
     $("#connection").textContent = "Reconnexion au service…";
+    void api<{ authenticated: boolean }>("/auth/status")
+      .then((auth) => {
+        if (!auth.authenticated) return showAuth();
+      })
+      .catch(() => {});
   };
 }
 async function action(name: string, target: HTMLElement) {

@@ -44,13 +44,17 @@ Les lampes à arrêter sont persistées avant la commande native. L’arrêt ann
 
 ## Stockage et sécurité
 
-SQLite stocke les réglages validés, événements dérivés et sessions d’authentification hachées. Aucun besoin d’un serveur de base de données. Le journal est limité à 100 000 événements.
+SQLite stocke les réglages validés, événements dérivés et sessions d’authentification hachées du mode serveur. Les sessions de bureau sont hachées et conservées en mémoire. Aucun besoin d’un serveur de base de données. Le journal est limité à 100 000 événements.
 
 Le coffre Hue est chiffré avec AES-GCM. Sa clé est dans le trousseau macOS, protégée par DPAPI sur Windows, ou dans un fichier privé sur Linux. La protection Linux suppose que le compte système et ses sauvegardes sont protégés : elle ne résiste pas à un attaquant qui lit à la fois le coffre et sa clé.
 
 Le certificat TLS Hue est mémorisé au premier contact local sans envoi de clé, puis vérifié par empreinte pour les requêtes authentifiées. C’est une confiance au premier usage, pas une vérification de la CA Signify. Une empreinte modifiée bloque les requêtes jusqu’à une nouvelle liaison physique.
 
-L’API exige une session locale ; le mot de passe est dérivé avec PBKDF2-SHA256, sel aléatoire et 600 000 itérations. Cookies HttpOnly/SameSite Strict, protection Host/Origin, en-tête spécifique pour les mutations, CSP sans scripts inline, corps limité à 64 Ko et limite sur les tentatives de connexion. Les secrets ne sont jamais inclus dans `/api/state` ou `/api/settings`.
+L’API exige une session. Le mode serveur utilise un mot de passe dérivé avec PBKDF2-SHA256, sel aléatoire et 600 000 itérations, avec limitation des tentatives. Cookies HttpOnly/SameSite Strict, protection Host/Origin, en-tête spécifique pour les mutations, CSP sans scripts inline et corps limité à 64 Ko. Les secrets ne sont jamais inclus dans `/api/state` ou `/api/settings`.
+
+Depuis preview.7, les lanceurs Mac et Windows activent explicitement `--desktop --listen 127.0.0.1`. Le service écrit un secret aléatoire de 256 bits dans un fichier privé du profil, renouvelé à chaque démarrage et supprimé à l’arrêt. Le lanceur prouve sa possession via un en-tête HTTP local, sans proxy ni redirection, pour obtenir un ticket aléatoire à usage unique expirant après une minute. Ce ticket est transmis dans le fragment de l’URL, retiré de l’historique par l’interface et échangé par POST contre un cookie de session de huit heures. Le secret du lanceur n’entre jamais dans le navigateur. Les tickets sont hachés en mémoire, consommés sous verrou et limités à vingt ouvertures en attente. Les cookies deviennent invalides au redémarrage et la déconnexion les révoque.
+
+Le mode bureau refuse toute adresse d’écoute différente de `127.0.0.1`, tout Host ou port différent de l’adresse canonique, et les connexions non locales. Les routes de configuration et connexion par mot de passe y sont absentes. Le mode serveur n’expose pas les routes de connexion automatique et n’accepte pas les sessions de bureau. Un ancien mot de passe et ses sessions stockées sont préservés ; cette séparation ne modifie pas le coffre Hue ni ses autorisations macOS.
 
 ## Distribution et mises à jour
 

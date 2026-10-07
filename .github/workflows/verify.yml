@@ -30,6 +30,7 @@ jobs:
       - run: node tests/api-smoke.mjs
         env:
           F1_HUE_TEST_BUILD: Release
+      - run: node tests/desktop-auth.mjs
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'

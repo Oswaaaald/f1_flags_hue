@@ -9,7 +9,7 @@ for(const runtime of roots){
  const folder=`artifacts/${runtime}/service`;
  const deps=JSON.parse(await readFile(`${folder}/f1-hue.deps.json`,'utf8'));
  assert.ok(deps.libraries[`f1-hue/${expected}`],`${runtime} must contain ${expected}`);
- const walk=async dir=>{for(const file of await readdir(dir)){const full=path.join(dir,file);if((await stat(full)).isDirectory())await walk(full);else assert.ok(!/^(config\.yml|bridge\.enc|vault\.key|setup-code\.txt|.*\.sqlite3(?:-wal|-shm)?)$/.test(file),`Private file in release: ${full}`);}};
+ const walk=async dir=>{for(const file of await readdir(dir)){const full=path.join(dir,file);if((await stat(full)).isDirectory())await walk(full);else assert.ok(!/^(config\.yml|bridge\.enc|vault\.key|desktop-launch\.key|setup-code\.txt|.*\.sqlite3(?:-wal|-shm)?)$/.test(file),`Private file in release: ${full}`);}};
  await walk(folder);
  console.log(`PASS ${runtime}: version ${expected}, no private profile files`);
 }

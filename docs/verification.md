@@ -1,6 +1,28 @@
-# Vérification de la preview.6
+# Vérification du projet
 
 Dernière vérification locale : 7 octobre 2026.
+
+## Preview.7 : connexion automatique des applications de bureau
+
+Les applications Mac et Windows utilisent maintenant une preuve privée du lanceur pour ouvrir une session locale. Aucun mot de passe n’est demandé dans leur interface. Les installations serveur, Linux et Docker conservent l’authentification par mot de passe. Le coffre Hue et un éventuel ancien mot de passe serveur restent conservés.
+
+| Contrôle local | Résultat |
+| --- | --- |
+| Compilation .NET avec avertissements traités comme erreurs | Réussie, aucun avertissement |
+| Contrôles C# | 127 réussis, dont 9 sur les tickets du lanceur |
+| Tests HTTP existants | 20 réussis |
+| Tests HTTP de connexion automatique | 17 réussis |
+| TypeScript strict, esbuild et formatage | Réussis |
+| Lanceurs Swift et Windows | Compilés ; lanceur Windows compilé depuis Mac |
+| Service inclus dans le paquet Mac ARM64 | 20 contrôles HTTP et 17 contrôles de connexion automatique réussis |
+| Contrôle du paquet et signature locale Mac | Réussis |
+| Application dans Applications | Preview.7 installée ; réglages, mot de passe serveur et coffre Hue conservés par comparaison d’empreintes |
+
+Sur une instance simulée séparée, le navigateur a été ouvert par ticket, puis déconnecté. L’adresse ne conserve pas le ticket et l’écran de déconnexion propose de rouvrir l’application, sans formulaire de mot de passe. L’ouverture du lanceur réellement installé a ensuite affiché directement le tableau de bord dans Firefox avec la version preview.7, la sélection Hue et la calibration existantes.
+
+Les tests vérifient notamment le refus des clients anonymes, des tickets expirés ou réutilisés, des mauvaises origines et des Host non canoniques ; les permissions du fichier privé, l’expiration des sessions de bureau, l’invalidation au redémarrage, la déconnexion et la conservation du mode serveur. Aucun test d’effet n’a commandé le pont réel pendant cette passe. La compilation du lanceur Windows depuis Mac ne constitue pas une vérification de son installation interactive.
+
+## Preview.6 : audit précédent
 
 ## Corrections issues de l’audit
 
@@ -65,6 +87,7 @@ Les paquets gratuits utilisent une signature Mac ad hoc et aucun certificat comm
 ```sh
 scripts/build.sh
 F1_HUE_TEST_BUILD=Release node tests/api-smoke.mjs
+F1_HUE_TEST_BUILD=Release node tests/desktop-auth.mjs
 F1_HUE_TEST_BUILD=Release node tests/api-smoke.mjs --network
 .venv/bin/python -m unittest discover -s tests -q
 npm run format:check --prefix apps/web

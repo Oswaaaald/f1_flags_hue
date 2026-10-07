@@ -11,6 +11,8 @@
 
 Le dossier contient `f1-hue.sqlite3`, `bridge.enc`, le code initial `setup-code.txt` jusqu’à la création du mot de passe, et éventuellement une clé de coffre protégée. Il doit rester privé. Sur Mac, sauvegarder le trousseau avec les données. Sur Windows, la clé DPAPI reste liée au compte Windows : une copie des fichiers vers un autre compte ne suffit pas à déchiffrer le pont. Dans ce cas, relier le pont depuis l’interface.
 
+Sur les applications Mac et Windows, `desktop-launch.key` contient une autorisation privée du lanceur, renouvelée à chaque démarrage et supprimée à l’arrêt. Les sessions de bureau restent en mémoire et expirent après huit heures ou au redémarrage du service. Le menu **Ouvrir F1 Hue Sync** reconnecte automatiquement le navigateur ; une adresse saisie manuellement sans session affiche les instructions d’ouverture. Les réglages, le coffre Hue et un ancien mot de passe serveur sont conservés.
+
 Pour sauvegarder, arrêter le service puis copier son dossier de données. Conserver aussi l’ancien `config.yml` tant que la migration n’a pas été vérifiée. Aucune commande de mise à jour fournie ne supprime ce dossier.
 
 ## Paramètres du service
@@ -20,6 +22,7 @@ Pour sauvegarder, arrêter le service puis copier son dossier de données. Conse
 | `--data CHEMIN` / `F1_HUE_DATA_DIR` | Dossier de données |
 | `--listen IP` / `F1_HUE_LISTEN` | Adresse d’écoute, `127.0.0.1` par défaut |
 | `--port PORT` / `F1_HUE_PORT` | Port, `8080` par défaut ; lanceurs bureau : `8081` |
+| `--desktop` | Connexion automatique des lanceurs Mac/Windows ; exige `--listen 127.0.0.1` et une preuve locale privée |
 | `--import config.yml` | Import initial sans écrasement d’une configuration v2 |
 | `--health-check` | Vérifie `/health` sans ouvrir la base de données |
 | `F1_HUE_HEALTH_URL` | URL de santé personnalisée, notamment avec HTTPS |
@@ -33,6 +36,8 @@ Pour sauvegarder, arrêter le service puis copier son dossier de données. Conse
 | `F1_HUE_TLS_PASSWORD` | Mot de passe du PFX, à injecter hors du dépôt |
 
 Les adresses IP littérales et `localhost` sont acceptées comme Host. Les noms DNS personnalisés doivent être ajoutés explicitement. Les en-têtes proxy transmis ne sont pas considérés fiables par défaut.
+
+En mode bureau, seul le Host `127.0.0.1` avec le port exact du service est accepté, même si `F1_HUE_ALLOWED_HOSTS` est défini. Le lanceur obtient un ticket utilisable une seule fois pendant une minute. Le navigateur l’échange contre sa session et retire immédiatement le ticket de l’adresse. Les vérifications Host/Origin et des requêtes de modification restent actives. `make web`, Linux et Docker utilisent le mode serveur avec mot de passe.
 
 ## Accès depuis un téléphone
 

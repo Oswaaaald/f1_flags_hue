@@ -17,11 +17,17 @@ Une seule version : **${tag}**. Choisis ton appareil.
 
 Dézippe le fichier, déplace **F1 Hue Sync.app** dans **Applications**, puis ouvre l’application.
 
+Si macOS bloque la première ouverture : **Réglages Système → Confidentialité et sécurité → Ouvrir quand même**. Le paquet utilise une signature locale gratuite. [Procédure Apple](https://support.apple.com/fr-fr/102445).
+
 ### ${download("Télécharger pour Windows — PC Intel ou AMD", `F1Hue-${version}-win-x64-Setup.exe`)}
 
 Ouvre le fichier téléchargé et suis les étapes de l’installation.
 
 Tes réglages et ta liaison Hue sont conservés lors d’une mise à jour.
+
+Les applications Mac et Windows te connectent automatiquement à l’interface, sans mot de passe à créer. Utilise leur menu **Ouvrir F1 Hue Sync** pour te reconnecter. Les installations réseau, Linux et Docker gardent la connexion par mot de passe.
+
+Sur Mac, le trousseau peut demander séparément l’accès à **F1Hue.Vault**, qui protège la liaison à ton pont Hue.
 
 <details>
 <summary>Autres appareils et installation avancée</summary>

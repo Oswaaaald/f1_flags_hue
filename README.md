@@ -16,13 +16,15 @@ Ouvrir **F1 Hue Sync.app** depuis le paquet `f1-hue-osx-arm64.zip` (Apple Silico
 
 Une icône de drapeau apparaît dans la barre des menus. Elle permet d’ouvrir l’interface, de consulter les journaux, d’importer un ancien `config.yml`, d’activer le lancement à l’ouverture de session et de quitter proprement. L’interface de bureau se trouve à **http://127.0.0.1:8081**. Fermer l’onglet laisse le service actif ; mettre le Mac en veille suspend la synchronisation.
 
-Au premier lancement, choisir un mot de passe local. Le code initial est rempli par le lanceur. Puis lier le pont, choisir les lampes, calibrer la TV et activer le direct. L’option **Préférences → Activer le direct au lancement** permet ensuite de démarrer automatiquement la synchronisation.
+L’application ouvre l’interface et te connecte automatiquement, sans mot de passe à créer. Puis lier le pont, choisir les lampes, calibrer la TV et activer le direct. L’option **Préférences → Activer le direct au lancement** permet ensuite de démarrer automatiquement la synchronisation. Pour rouvrir l’interface après une déconnexion ou un redémarrage, utiliser **Ouvrir F1 Hue Sync** dans le menu de l’application.
+
+Le trousseau macOS protège séparément la clé de la liaison Hue. Il peut demander une autorisation d’accès à **F1Hue.Vault**, notamment après une mise à jour ; cette fenêtre utilise le mot de passe du trousseau, généralement celui de la session Mac. Le mot de passe de l’ancienne interface reste conservé pour une utilisation ultérieure en mode serveur.
 
 Les paquets Mac sont signés localement (signature ad hoc gratuite), sans abonnement Apple Developer. À la première ouverture, macOS peut demander une autorisation : après avoir tenté d’ouvrir l’application, aller dans **Réglages Système → Confidentialité et sécurité → Ouvrir quand même**. Voir la [procédure Apple](https://support.apple.com/fr-fr/102445). Les mises à jour conservent tes données.
 
 ### Windows
 
-Exécuter `F1Hue-VERSION-win-x64-Setup.exe` (ou la variante ARM64), ou extraire le ZIP et ouvrir `F1Hue.exe`. L’application reste dans la zone de notification. Le menu offre les mêmes fonctions que sur Mac, notamment le lancement à l’ouverture de session. Aucun Python, Node ou .NET à installer pour utiliser un paquet autonome.
+Exécuter `F1Hue-VERSION-win-x64-Setup.exe` (ou la variante ARM64), ou extraire le ZIP et ouvrir `F1Hue.exe`. L’application ouvre l’interface avec une connexion automatique et reste dans la zone de notification. Le menu offre les mêmes fonctions que sur Mac, notamment le lancement à l’ouverture de session. Aucun Python, Node ou .NET à installer pour utiliser un paquet autonome.
 
 ### NAS, Raspberry Pi ou mini-PC avec Docker
 

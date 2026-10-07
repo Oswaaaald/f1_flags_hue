@@ -61,6 +61,7 @@ jobs:
           service="$PWD/artifacts/${{ matrix.runtime }}/service/f1-hue"
           if [ '${{ runner.os }}' = 'Windows' ]; then service="$service.exe"; fi
           F1_HUE_TEST_EXECUTABLE="$service" node tests/api-smoke.mjs
+          F1_HUE_TEST_EXECUTABLE="$service" node tests/desktop-auth.mjs
       - uses: actions/upload-artifact@v4
         with:
           name: f1-hue-${{ matrix.runtime }}
