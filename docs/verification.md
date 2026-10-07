@@ -42,11 +42,21 @@ Les tests Python de restauration et de remplacement attendent désormais des év
 
 Dans Firefox, les vues Direct, Hue, Tests et Drapeaux ont été ouvertes sur une instance simulée séparée. Un aperçu Safety Car a été lancé puis arrêté ; les boutons sont redevenus disponibles. Le compte, les lampes et les événements de ces tests sont jetables. L’application installée a ensuite été vérifiée en lecture seule sur bureau et en vue adaptative de 402 pixels : Direct, Calibration TV et Drapeaux sont lisibles ; Stop, la navigation et la déconnexion restent accessibles. Ses réglages n’ont pas été modifiés par ces contrôles.
 
+## Vérification GitHub Actions
+
+Les workflows ont été exécutés le 7 octobre 2026 sur le commit `de14c40` :
+
+- [Verify](https://github.com/Oswaaaald/f1_flags_hue/actions/runs/37640063442) : réussi sur Windows, Mac et Linux, avec 118 contrôles C# et 20 contrôles HTTP par système. Les 77 tests Python passent sur Mac/Linux ; Windows en exécute 76 et ignore uniquement le contrôle des permissions POSIX.
+- [Build installers](https://github.com/Oswaaaald/f1_flags_hue/actions/runs/37640082650) : les six paquets Mac ARM64/Intel, Windows x64/ARM64 et Linux x64/ARM64 sont construits sur leurs systèmes natifs. Chaque service empaqueté passe les 20 contrôles HTTP et le contrôle de version et d’absence de fichiers privés.
+- Les installateurs Inno Setup Windows x64 et ARM64 et les ZIP portables sont générés. L’image Docker OCI est construite pour `linux/amd64` et `linux/arm64`. Les fichiers sont disponibles dans les artifacts de cette exécution.
+
+Les problèmes relevés pendant ces exécutions ont été corrigés : fins de ligne LF pour Prettier sous Windows, tests Python indépendants de l’ordonnanceur et de la précision de l’horloge Windows, contrôle POSIX réservé aux systèmes compatibles, apostrophe dans le script PowerShell.
+
 ## Portée des résultats
 
 Le flux F1 a fourni une séance terminée. Cela vérifie la connexion, pas la réception d’un nouvel événement pendant une course réelle. Le rendu physique des lampes n’a pas été évalué visuellement pendant cette passe.
 
-Les ZIP Windows sont compilés localement ; les installateurs Inno Setup et les contrôles sur les systèmes natifs sont configurés dans le workflow GitHub. Leur exécution distante doit être verte avant publication. Une compilation croisée ne prouve pas le fonctionnement complet du bureau Windows ou Linux.
+Cette exécution manuelle n’a pas publié de release. La compilation des installateurs et les tests du service ne vérifient pas l’installation interactive ni le rendu du lanceur Windows ou Linux.
 
 Les paquets gratuits utilisent une signature Mac ad hoc et aucun certificat commercial Windows. Aucune notarisation Apple ni mise à jour automatique signée n’est annoncée.
 
