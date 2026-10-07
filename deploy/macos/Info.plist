@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleExecutable</key><string>F1Hue</string>
+<key>CFBundleIdentifier</key><string>local.f1hue.desktop</string>
+<key>CFBundleName</key><string>F1 Hue Sync</string>
+<key>CFBundleDisplayName</key><string>F1 Hue Sync</string>
+<key>CFBundleShortVersionString</key><string>2.0.0</string>
+<key>CFBundleVersion</key><string>20006</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>LSMinimumSystemVersion</key><string>15.0</string>
+<key>LSUIElement</key><true/>
+<key>NSLocalNetworkUsageDescription</key><string>F1 Hue Sync découvre ton pont Hue et synchronise uniquement les lampes que tu choisis.</string>
+<key>NSBonjourServices</key><array><string>_hue._tcp</string></array>
+</dict></plist>

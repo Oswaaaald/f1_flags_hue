@@ -1,0 +1,17 @@
+**/bin
+**/obj
+**/node_modules
+apps/web/dist
+.git
+.venv
+.tools
+.runtime
+artifacts
+config.yml
+baseline.json
+.data
+data
+**/*.log
+.env
+**/*.pfx
+**/*.p12

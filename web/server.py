@@ -67,6 +67,13 @@ def _trusted_request_host() -> bool:
 
 @app.before_request
 def reject_cross_origin_writes():
+    # The retained Python UI has no account system: keep it strictly local,
+    # including when someone starts it through a different WSGI server.
+    try:
+        if not ipaddress.ip_address(request.remote_addr or "").is_loopback:
+            return jsonify({"ok": False, "error": "L’interface Python est réservée à cet ordinateur. Utilise l’application F1 Hue pour un accès réseau authentifié."}), 403
+    except ValueError:
+        return jsonify({"ok": False, "error": "Adresse cliente invalide."}), 403
     if not _trusted_request_host():
         return jsonify({"ok": False, "error": "Nom d’hôte non autorisé."}), 400
     if request.path.startswith("/api/") and request.headers.get("Sec-Fetch-Site") == "cross-site":
@@ -1162,4 +1169,7 @@ def api_setup_targets():
 
 
 if __name__ == "__main__":
-    app.run(host=os.environ.get("F1_HUE_WEB_HOST", "127.0.0.1"), port=8080, debug=False)
+    host = os.environ.get("F1_HUE_WEB_HOST", "127.0.0.1")
+    if host not in ("127.0.0.1", "::1", "localhost"):
+        raise SystemExit("La version Python est locale uniquement. Utilise la version .NET pour héberger F1 Hue sur le réseau.")
+    app.run(host=host, port=8080, debug=False)

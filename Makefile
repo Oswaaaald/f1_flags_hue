@@ -21,14 +21,14 @@ export PYTHONIOENCODING = UTF-8
         setup-wizard setup-link setup-lights setup-groups \
         baseline-capture baseline-restore baseline-print \
         sync-calibrate sync-show \
-        doctor web web-run
+        doctor web web-run web-legacy
 
 help:
 	@echo ""
 	@echo " F1 Hue Sync — commandes utiles"
 	@echo ""
-	@echo "  make install                Installer les dépendances Python"
-	@echo "  make init-config            Copier config.example.yml -> config.yml (si absent)"
+	@echo "  make web                    Lancer la nouvelle interface .NET"
+	@echo "  make web-legacy             Lancer la version Python conservée"
 	@echo ""
 	@echo "  make setup-wizard           Assistant: choisir pièce/zone(s)/lampes"
 	@echo "  make setup-link             Vérifier la liaison bridge/username"
@@ -71,7 +71,7 @@ run-live:
 	@$(PY) $(APP) live
 
 check-live:
-	@$(PY) $(APP) check-live
+	@scripts/dev.sh --check-live
 
 test:
 	@echo "==> Mode test"
@@ -84,12 +84,12 @@ quick:
 # --- Web UI --------------------------------------------------------------
 
 web:
-	@echo "==> Web UI (http://localhost:8080)"
+	@scripts/dev.sh
+
+web-legacy:
 	@$(PY) web/server.py
 
-web-run:
-	@echo "==> Web UI (http://localhost:8080)"
-	@PYTHONPATH=. $(PY) web/server.py
+web-run: web
 
 # ---- SETUP -------------------------------------------------------------------
 
@@ -143,5 +143,5 @@ doctor:
 	@$(PY) -c "import sys; sys.exit(0)"
 	@$(PY) -m pip show requests >/dev/null 2>&1 && echo ' • Dep         : requests OK' || echo ' • Dep         : requests MISSING (make install)'
 	@$(PY) -m pip show PyYAML   >/dev/null 2>&1 && echo ' • Dep         : PyYAML   OK' || echo ' • Dep         : PyYAML   MISSING (make install)'
-	@$(PY) -m pip show signalrcore >/dev/null 2>&1 && echo ' • Dep         : signalrcore OK' || echo ' • Dep         : signalrcore MISSING (make install)'
+	@$(PY) -m pip show websocket-client >/dev/null 2>&1 && echo ' • Dep         : websocket-client OK' || echo ' • Dep         : websocket-client MISSING (make install)'
 	@$(PY) $(APP) setup link || true

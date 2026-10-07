@@ -1,4 +1,5 @@
 requests>=2.32
 PyYAML>=6.0
 Flask>=3.0
-signalrcore>=1.0.2,<2
+Werkzeug>=3.1.9,<4
+websocket-client>=1.9.2,<2

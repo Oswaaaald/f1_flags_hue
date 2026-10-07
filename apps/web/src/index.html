@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="theme-color" content="#fafaf9" />
+    <meta name="color-scheme" content="light dark" />
+    <title>F1 Hue Sync</title>
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="stylesheet" href="/app.css" />
+    <script type="module" src="/app.js"></script>
+  </head>
+  <body>
+    <div id="auth" class="auth-shell"><p>Connexion à F1 Hue Sync…</p></div>
+    <div id="shell" class="shell" hidden>
+      <aside class="sidebar">
+        <a class="brand" href="#live" data-page="live"
+          ><img src="/icon.svg" alt="" width="32" height="32" /><span
+            >F1 Hue<span class="brand-sub">SYNC</span></span
+          ></a
+        >
+        <nav aria-label="Navigation principale" id="nav"></nav>
+        <div class="sidebar-bottom">
+          <span class="local-dot"></span> Chez toi, en direct.<button
+            class="text-button"
+            data-action="logout"
+          >
+            Se déconnecter
+          </button>
+        </div>
+      </aside>
+      <div class="workspace">
+        <header class="topbar">
+          <span id="breadcrumb">Direct</span>
+          <div class="topbar-actions">
+            <button
+              class="text-button mobile-logout"
+              data-action="logout"
+              aria-label="Se déconnecter"
+            >
+              Déconnexion
+            </button>
+            <span id="connection" class="badge">Connexion…</span
+            ><button
+              id="stop"
+              class="button danger"
+              data-action="stop"
+              disabled
+            >
+              <span aria-hidden="true">■</span> Stop
+            </button>
+          </div>
+        </header>
+        <main id="main" tabindex="-1"></main>
+        <footer>
+          F1 Hue Sync <span id="version"></span><span id="simulation"></span>
+        </footer>
+      </div>
+    </div>
+    <div id="toast" role="status" aria-live="polite" hidden></div>
+  </body>
+</html>

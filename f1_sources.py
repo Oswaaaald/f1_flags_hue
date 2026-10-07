@@ -1,6 +1,5 @@
-import os
 import logging
-import requests, time, threading
+import threading
 from live_events import LiveEvent
 
 class F1SourceFormula1Live:
@@ -161,38 +160,15 @@ class F1SourceFormula1Live:
                           details={"total_laps": self.total_laps})
 
     def _connect(self):
-        from signalrcore.hub_connection_builder import HubConnectionBuilder
-        from signalrcore.types import HubProtocolEncoding
+        from signalr_json import JsonF1Connection
 
-        # signalrcore negotiates via urllib, which may not use the system CA on macOS.
-        os.environ.setdefault("SSL_CERT_FILE", requests.certs.where())
-        response = requests.options(self.NEGOTIATE_URL, timeout=8)
-        cookie = response.cookies.get("AWSALBCORS")
-        headers = {"Cookie": f"AWSALBCORS={cookie}"} if cookie else {}
-        connection = (HubConnectionBuilder()
-                      .with_url(self.URL, options={"verify_ssl": True, "headers": headers})
-                      .with_hub_protocol(HubProtocolEncoding.text)
-                      .configure_logging(logging.ERROR)
-                      .build())
-        opened = threading.Event()
         self._closed_event.clear()
-        connection.on_open(opened.set)
-        connection.on("feed", self._on_message)
         def on_close():
             self._closed_event.set()
             self._publish("connection", "disconnected")
-        connection.on_close(on_close)
+        connection = JsonF1Connection(self._on_message, on_close)
         connection.start()
-        if not opened.wait(10):
-            connection.stop()
-            raise ConnectionError("Le flux F1 ne s'est pas ouvert en 10 secondes.")
         self._publish("connection", "connected")
-        try:
-            connection.send("Subscribe", [["RaceControlMessages", "TrackStatus", "SessionInfo", "SessionStatus", "ExtrapolatedClock", "LapCount"]],
-                            on_invocation=self._on_message)
-        except Exception:
-            connection.stop()
-            raise
         return connection
 
     def state_snapshot(self):

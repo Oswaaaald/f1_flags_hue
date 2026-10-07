@@ -1,0 +1,108 @@
+name: Build installers
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+jobs:
+  verify:
+    uses: ./.github/workflows/verify.yml
+  desktop:
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            runtime: osx-arm64
+          - os: macos-15-intel
+            runtime: osx-x64
+          - os: windows-latest
+            runtime: win-x64
+          - os: windows-11-arm
+            runtime: win-arm64
+          - os: ubuntu-latest
+            runtime: linux-x64
+          - os: ubuntu-24.04-arm
+            runtime: linux-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --prefix apps/web
+      - if: runner.os != 'Windows'
+        run: scripts/publish.sh '${{ matrix.runtime }}'
+        env:
+          F1_HUE_RELEASES_URL: https://github.com/${{ github.repository }}/releases
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (!(Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) { choco install innosetup --no-progress -y; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } }
+          deploy/windows/build.ps1 -Runtime '${{ matrix.runtime }}'
+          New-Item -ItemType Directory -Force 'artifacts/${{ matrix.runtime }}/service' | Out-Null
+          Copy-Item 'artifacts/${{ matrix.runtime }}/desktop/service/*' 'artifacts/${{ matrix.runtime }}/service/' -Recurse -Force
+        env:
+          F1_HUE_RELEASES_URL: https://github.com/${{ github.repository }}/releases
+      - name: Validate version and packaged service on its native OS
+        shell: bash
+        run: |
+          node scripts/check-release.mjs '${{ matrix.runtime }}'
+          service="$PWD/artifacts/${{ matrix.runtime }}/service/f1-hue"
+          if [ '${{ runner.os }}' = 'Windows' ]; then service="$service.exe"; fi
+          F1_HUE_TEST_EXECUTABLE="$service" node tests/api-smoke.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: f1-hue-${{ matrix.runtime }}
+          path: |
+            artifacts/*.zip
+            artifacts/*.tar.gz
+            artifacts/*.exe
+          if-no-files-found: error
+  docker:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: false
+          outputs: type=oci,dest=/tmp/f1-hue-image.tar
+      - uses: actions/upload-artifact@v4
+        with:
+          name: f1-hue-docker
+          path: /tmp/f1-hue-image.tar
+  release:
+    if: github.ref_type == 'tag'
+    needs: [desktop, docker]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: f1-hue-*
+          path: release
+          merge-multiple: true
+      - name: Check tag, calculate checksums and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          node scripts/check-release-tag.mjs "$RELEASE_TAG"
+          cd release
+          sha256sum *.zip *.tar.gz *.exe *.tar > SHA256SUMS
+          args=()
+          if [[ "$RELEASE_TAG" == *-* ]]; then args+=(--prerelease); fi
+          gh release create "$RELEASE_TAG" --verify-tag --title "F1 Hue Sync $RELEASE_TAG" --generate-notes "${args[@]}" ./*

@@ -24,3 +24,13 @@ mock.log
 .mock.pid
 
 data/bridges_cache.json
+.tools/
+**/bin/
+**/obj/
+**/node_modules/
+apps/web/dist/
+artifacts/
+.runtime/
+*.user
+*.pfx
+*.p12

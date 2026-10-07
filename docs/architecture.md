@@ -1,29 +1,73 @@
-# Architecture du direct
+# Architecture v2
 
 ```text
-Flux Formula 1 (SignalR)
-        │
-        ▼
-F1SourceFormula1Live ──► LiveEvent ──► LiveTimingService ──► calibrations / état web
-                                           │
-                                           ├──► EventJournal (SQLite local)
-                                           │
-                                           └──► EffectRules + ordonnanceur TV ──► LightEngine ──► Hue
-EventJournal ──► replay_events ────────────────────────────────────────┘
-Archive F1 ──► historical_replay ──► replay_events ─────────────────────┘
+src/F1Hue.Core/             Modèles, validation, parsing F1, calibration, ordonnanceur, effets
+src/F1Hue.Infrastructure/   SignalR officiel, Hue HTTPS v2/v1, découverte, SQLite, coffre, migration
+apps/host/                 Processus ASP.NET Core, API, authentification et interface embarquée
+apps/web/                  Interface TypeScript + CSS, sans framework ni dépendance au runtime
+apps/web/dist/             Sortie générée par esbuild (non suivie dans Git)
+deploy/macos/              Lanceur Swift dans la barre des menus
+deploy/windows/           Lanceur C# dans la zone de notification et installateur Inno Setup
+deploy/linux/             Installation du service utilisateur systemd
+deploy/docker/            Conteneur sans privilèges
+tests/F1Hue.Tests/         Vérifications du domaine et des adaptateurs
+tests/api-smoke.mjs        Intégration HTTP avec pont simulé
 ```
 
-## Responsabilités
+## Flux d’un événement
 
-- `f1_sources.py` est le seul adaptateur du flux Formula 1. Il gère SignalR, les snapshots, les mises à jour et la reconnexion. Il publie des `LiveEvent` sans connaître Hue ou Flask.
-- `live_events.py` définit l'événement commun : type, valeur, séance, heure de réception, heure F1 éventuelle et métadonnées limitées.
-- `live_service.py` ouvre une connexion par processus, tient l'état courant de la séance et distribue les événements aux consommateurs. Le web garde ce service actif même lorsque le mode Hue est arrêté, afin que les calibrations et l'état restent disponibles.
-- `event_journal.py` enregistre localement les événements dérivés utiles au diagnostic et au replay. Les données brutes du flux F1 ne sont pas copiées dans le dépôt. Le journal SQLite est dans `.data/`, ignoré par Git.
-- `historical_replay.py` propose un petit catalogue fixe de séances passées et lit leurs messages de contrôle directement dans les archives de `livetiming.formula1.com`. Les archives sont téléchargées à la demande et les drapeaux dérivés sont gardés en mémoire pour la durée du processus web.
-- `effects.py` associe les drapeaux aux patterns configurés et applique l'offset TV à partir de l'heure de réception de chaque événement. L'effet dépend d'une interface `play(pattern_name)`, pas directement de l'API Hue.
-- `hue_targets.py` prépare les lampes sélectionnées. Un groupe Hue synchronisé est utilisé si possible ; sinon seules les lampes sélectionnées sont ciblées.
-- `web/server.py` et `f1_hue.py` pilotent le cycle de vie de Hue, sans décoder eux-mêmes le protocole F1.
+```mermaid
+flowchart LR
+    F1[Flux officiel SignalR] --> P[Parseur de séance]
+    P --> J[Journal SQLite]
+    P --> C[Calibration]
+    P --> Q[File du direct et décalage TV]
+    R[Replay / tests] --> E[Moteur d'effets sérialisé]
+    Q --> E
+    S[Réglages validés] --> E
+    E --> H[Hue HTTPS v2 et pulsation v1]
+    H --> L[Lampes sélectionnées]
+    E --> B[Restauration de leur état initial]
+```
 
-## Limites actuelles
+Le parseur reste indépendant du réseau. Il distingue les snapshots des nouveaux événements, déduplique les drapeaux et accepte un rouge après `Aborted` ou un damier après `Finished`. Les topics restent souscrits même si un événement est désactivé dans l’interface.
 
-Le flux appartient à Formula 1 et n'est pas une API publique documentée. Son schéma ou son accès peuvent changer. Une connexion web et une commande CLI lancées simultanément constituent deux processus, donc deux connexions ; le partage vaut à l'intérieur de chaque processus. Le replay reproduit les écarts entre drapeaux à la vitesse choisie, tandis que les durées des patterns Hue restent celles de `config.yml`.
+Un seul mode détient les lampes. Le direct abonne une file bornée aux événements du flux partagé. Chaque événement retient son heure monotone de réception et le décalage configuré à cet instant. Ses règles de couleur, activation et durée sont lues au moment où il est joué. Les changements de décalage ne réordonnent pas les événements déjà en attente.
+
+Une génération et un verrou sérialisent les opérations Hue. Le minuteur d’un ancien effet ne peut restaurer les lampes après le démarrage d’un effet plus récent. La fin d’un effet fixe et un événement désactivé restaurent l’état de début de mode. Stop respecte l’option de restauration de sortie. Une restauration interrompue reste enregistrée pour être retentée au lancement suivant.
+
+La luminosité/couleur utilise xy. Les couleurs fixes et la restauration passent par l’API HTTPS v2. Depuis preview.5, les clignotements utilisent l’animation native de l’ancien moteur Python : API Hue v1 `alert=lselect` pour SC, VSC et damier ; `alert=select` toutes les 0,7 s pour le bleu. Les requêtes v1 conservent HTTPS, l’empreinte du certificat et l’interdiction des proxies/redirections. La clé du pont reste côté service ; les erreurs sont expurgées et les URL authentifiées ne sont pas journalisées.
+
+Pour plusieurs lampes, un groupe contenant exactement leurs identifiants v1 est réutilisé ou créé, sans modifier un groupe existant. Le groupe 0 est interdit. Avant chaque renouvellement (10 s pour lselect), sa composition est revérifiée. Les lampes calculent la courbe et son rythme ; le réglage de transition ne pilote que le changement de couleur. Le moteur Entertainment expérimental et sa dépendance DTLS ont été retirés. Seule la récupération d’une ancienne zone encore active est conservée.
+
+Les lampes à arrêter sont persistées avant la commande native. L’arrêt annule et attend le renouvellement en cours, puis envoie `alert=none` individuellement aux lampes mémorisées, même si leur groupe a changé. Un échec sur une lampe n’empêche pas les autres annulations ; les cibles en échec restent persistées avec l’état initial pour une nouvelle tentative ou la récupération au lancement. Une ancienne zone Entertainment restée active est toujours libérée avant de reprendre la sélection. La sélection reste verrouillée tant que l’arrêt est incomplet.
+
+## Stockage et sécurité
+
+SQLite stocke les réglages validés, événements dérivés et sessions d’authentification hachées. Aucun besoin d’un serveur de base de données. Le journal est limité à 100 000 événements.
+
+Le coffre Hue est chiffré avec AES-GCM. Sa clé est dans le trousseau macOS, protégée par DPAPI sur Windows, ou dans un fichier privé sur Linux. La protection Linux suppose que le compte système et ses sauvegardes sont protégés : elle ne résiste pas à un attaquant qui lit à la fois le coffre et sa clé.
+
+Le certificat TLS Hue est mémorisé au premier contact local sans envoi de clé, puis vérifié par empreinte pour les requêtes authentifiées. C’est une confiance au premier usage, pas une vérification de la CA Signify. Une empreinte modifiée bloque les requêtes jusqu’à une nouvelle liaison physique.
+
+L’API exige une session locale ; le mot de passe est dérivé avec PBKDF2-SHA256, sel aléatoire et 600 000 itérations. Cookies HttpOnly/SameSite Strict, protection Host/Origin, en-tête spécifique pour les mutations, CSP sans scripts inline, corps limité à 64 Ko et limite sur les tentatives de connexion. Les secrets ne sont jamais inclus dans `/api/state` ou `/api/settings`.
+
+## Distribution et mises à jour
+
+Le moteur est identique dans tous les paquets. Le lanceur de bureau possède le processus enfant et ouvre le navigateur. Une fermeture normale donne au service le temps de stopper les effets et de restaurer les lampes.
+
+Les paquets actuels se mettent à jour en remplaçant l’application arrêtée, sans modifier son dossier de données. Le menu ouvre la page de releases officielle du dépôt. Il n’exécute pas automatiquement un binaire téléchargé. Une mise à jour automatique signée et la publication des installateurs demandent encore une infrastructure de signature et de release.
+
+Les scripts Mac acceptent `APPLE_SIGNING_IDENTITY` et `APPLE_NOTARY_PROFILE`. Le script Windows accepte `WINDOWS_SIGNING_THUMBPRINT`. Aucun secret de signature n’est stocké dans Git.
+
+## Garanties de concurrence depuis preview.6
+
+Le profil est verrouillé par le système avant l’ouverture de SQLite, l’import et toute récupération Hue. Ce verrou est libéré à la fermeture ou après un crash. Le fichier de verrou n’est jamais supprimé pendant son utilisation.
+
+Le serveur réserve la récupération initiale dans le même coordinateur que les commandes, puis attend que le port soit effectivement ouvert avant de toucher aux lampes. Les corps HTTP sont analysés sans verrou de commande. Stop invalide les commandes reçues précédemment, annule l’opération active et les téléchargements, puis attend leur fin avant de nettoyer les lampes. Une requête lente de connexion ne retient donc pas Stop.
+
+Les archives sont téléchargées hors verrou, avec une échéance qui couvre aussi leur corps. Leur démarrage reprend le verrou et revérifie l’absence de mode actif. Les réglages restent sérialisés ; la sélection reste fixe pendant un mode.
+
+Le parseur conserve séparément la neutralisation globale et les secteurs jaunes. Un message local ne remplace pas SC/VSC/RED. Un vert global explicite ou TrackStatus peut libérer la neutralisation. Les champs Utc sans suffixe sont explicitement interprétés en UTC. La déduplication du direct inclut l’identifiant de séance. Le replay utilise également TrackStatus.
+
+L’interface sépare les types, les appels API, les composants communs et les vues. La version affichée est lue depuis la version compilée du moteur.

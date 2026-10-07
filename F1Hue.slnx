@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="src/F1Hue.Core/F1Hue.Core.csproj" />
+  <Project Path="src/F1Hue.Infrastructure/F1Hue.Infrastructure.csproj" />
+  <Project Path="apps/host/F1Hue.Host.csproj" />
+  <Project Path="tests/F1Hue.Tests/F1Hue.Tests.csproj" />
+</Solution>

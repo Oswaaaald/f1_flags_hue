@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup><AssemblyName>f1-hue</AssemblyName></PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/F1Hue.Infrastructure/F1Hue.Infrastructure.csproj" />
+    <Content Include="../web/dist/**" Link="wwwroot/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

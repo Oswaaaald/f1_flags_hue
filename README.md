@@ -1,82 +1,102 @@
 # F1 Hue Sync
 
-Synchronise vos lampes **Philips Hue** avec les **drapeaux F1** en direct, via le flux de live timing Formula 1 accessible sans compte.
-Clignotements réguliers (`alert`), **switch instantané**, fondu propre, **baseline** utilisateur, **offset TV** + **calibration**, et **simulation locale** pour tester hors GP.
+Synchroniser ses lampes Philips Hue avec les drapeaux F1, en tenant compte du retard de sa TV. Le service fonctionne chez soi, en arrière-plan. Aucun compte cloud propre au projet, aucun abonnement à une API de timing.
 
-> Non affilié à Formula 1®, F1 TV ou Signify/Philips Hue.
+La version **2.0 preview** utilise C#/.NET 10, une interface TypeScript intégrée et SQLite. La version Python reste disponible pendant la transition ; ses tests sont conservés.
 
----
+## Utiliser l’application
 
-## État du direct (septembre 2026)
+### macOS
 
-Le programme lit directement les messages `RaceControlMessages` et `TrackStatus` du flux SignalR de live timing de Formula 1. Une connexion sans compte a été vérifiée pendant les essais libres du GP d'Azerbaïdjan le 25 septembre 2026 : le flux a envoyé le drapeau vert de la séance. Les drapeaux rouge et jaune, SC/VSC et drapeau à damier sont décodés à partir des mêmes canaux, mais n'ont pas tous été observés en direct lors de ce contrôle. Ce flux est non documenté et peut changer sans préavis. OpenF1 n'est pas utilisé ; les anciennes clés `source` et `openf1` d'un `config.yml` existant sont ignorées.
+macOS 15 ou ultérieur, conformément aux [systèmes pris en charge par .NET 10](https://github.com/dotnet/core/blob/main/release-notes/10.0/supported-os.md).
 
-Le projet utilise l'API locale Hue v1. Le pont Hue et ce programme doivent être sur le même réseau local. Une connexion au flux F1 ne prouve pas la liaison Hue.
+Ouvrir **F1 Hue Sync.app** depuis le paquet `f1-hue-osx-arm64.zip` (Apple Silicon) ou `f1-hue-osx-x64.zip` (Intel). Déplacer l’application dans Applications avant d’activer son démarrage automatique.
 
-## Démarrage
+Une icône de drapeau apparaît dans la barre des menus. Elle permet d’ouvrir l’interface, de consulter les journaux, d’importer un ancien `config.yml`, d’activer le lancement à l’ouverture de session et de quitter proprement. L’interface de bureau se trouve à **http://127.0.0.1:8081**. Fermer l’onglet laisse le service actif ; mettre le Mac en veille suspend la synchronisation.
 
-Installez les dépendances :
-```bash
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt
+Au premier lancement, choisir un mot de passe local. Le code initial est rempli par le lanceur. Puis lier le pont, choisir les lampes, calibrer la TV et activer le direct. L’option **Préférences → Activer le direct au lancement** permet ensuite de démarrer automatiquement la synchronisation.
+
+Les paquets Mac sont signés localement (signature ad hoc gratuite), sans abonnement Apple Developer. À la première ouverture, macOS peut demander une autorisation : après avoir tenté d’ouvrir l’application, aller dans **Réglages Système → Confidentialité et sécurité → Ouvrir quand même**. Voir la [procédure Apple](https://support.apple.com/fr-fr/102445). Les mises à jour conservent tes données.
+
+### Windows
+
+Exécuter `F1Hue-VERSION-win-x64-Setup.exe` (ou la variante ARM64), ou extraire le ZIP et ouvrir `F1Hue.exe`. L’application reste dans la zone de notification. Le menu offre les mêmes fonctions que sur Mac, notamment le lancement à l’ouverture de session. Aucun Python, Node ou .NET à installer pour utiliser un paquet autonome.
+
+### NAS, Raspberry Pi ou mini-PC avec Docker
+
+Depuis le dépôt :
+
+```sh
+docker compose up -d --build
+docker compose exec f1-hue cat /data/setup-code.txt
 ```
 
-Vérifiez le flux sans allumer les lampes :
-```bash
-make check-live
+Ouvrir `http://localhost:8080` sur le serveur, saisir le code affiché et créer son mot de passe. Le volume `f1-hue-data` conserve les réglages, le journal et la liaison du pont. Le service redémarre avec Docker. Les images prennent en charge `linux/amd64` et `linux/arm64` (système 64 bits requis).
+
+Le conteneur et le pont doivent pouvoir communiquer sur le réseau local. La découverte mDNS traverse rarement un réseau Docker ; la découverte Hue ou la saisie manuelle de l’adresse restent disponibles. Ne pas rediriger ce port sur Internet. Pour un accès réseau chiffré, voir [l’hébergement et la sécurité](docs/hosting.md).
+
+### Linux sans Docker
+
+Extraire le paquet correspondant puis exécuter `./install.sh`. Le service utilisateur systemd est installé sous `~/.local/lib/f1-hue` et démarre à la connexion. Pour démarrer avant la connexion, l’administrateur peut activer le maintien des services de cet utilisateur (`loginctl enable-linger NOM_UTILISATEUR`).
+
+## Fonctionnalités
+
+- **Direct** : état du flux, séance, effet actif, lampes ciblées, Stop et journal horodaté.
+- **Calibration** : temps restant d’essais/qualifications ; clic au départ, au prochain drapeau ou au prochain tour pour la course.
+- **Hue** : découverte, liaison au bouton physique, choix précis de zones ou de lampes couleur. HTTPS avec empreinte du certificat du pont mémorisée lors du premier contact.
+- **Tests** : aperçu individuel, séquence des événements activés, replay des séances reçues et de trois archives officielles F1.
+- **Drapeaux** : neuf événements, activation individuelle et durée fixe ou jusqu’au suivant. Le bleu est désactivé par défaut.
+- **Préférences** : luminosité, transition, restauration, limite de clignotement, arrêt au damier, démarrage du direct et thèmes clair/sombre/automatique.
+- **Pulsation native Hue** : même animation que dans la version Python, calculée par les lampes. Aucune zone Entertainment nécessaire ; les lampes choisies sont synchronisées dans un groupe exact.
+
+Les règles de drapeaux sont relues au moment de jouer chaque événement, **après** le décalage TV. L’effet déjà actif conserve sa durée initiale. Un événement désactivé termine l’effet précédent et restaure les lampes. La sélection reste verrouillée pendant un mode actif.
+
+Les clignotements utilisent `alert=lselect` (SC, VSC, damier) et `alert=select` répété pour le bleu. Le réglage **Transition** concerne les changements de couleur ; le rythme natif est fixé par les lampes. L’application renouvelle la pulsation pour les effets prolongés et envoie `alert=none` aux seules lampes choisies avant un autre drapeau ou Stop. Une annulation échouée reste réessayable et est reprise au prochain démarrage. La restauration restitue l’état statique capturé ; une animation de scène Hue externe n’est pas reconstruite.
+
+## Données F1
+
+Une seule connexion au flux officiel :
+
+- SignalR : `https://livetiming.formula1.com/signalrcore`
+- Topics : `RaceControlMessages`, `TrackStatus`, `SessionInfo`, `SessionStatus`, `ExtrapolatedClock`, `LapCount`.
+- Replays historiques : `https://livetiming.formula1.com/static/` avec un catalogue de chemins fixes.
+
+Le projet n’utilise ni OpenF1 ni une API commerciale intermédiaire. Cet accès au flux est non documenté comme API publique : sa disponibilité et son format peuvent évoluer. Projet indépendant, non affilié à Formula 1 ou à Philips Hue.
+
+## Migrer la version Python
+
+L’application Mac détecte `~/f1_flags_hue/config.yml` au premier lancement. Le menu **Importer un config.yml…** permet de sélectionner un autre fichier. Un import n’écrase jamais une configuration v2 déjà enregistrée. Le fichier source reste intact.
+
+Le décalage `sync.offset_seconds`, la clé du pont, les préférences et les réglages des drapeaux sont importés. Les anciennes références aux lampes et groupes sont converties en identifiants Hue v2 quand le pont est joignable. Une ancienne sélection « toutes les lampes », vide ou introuvable demande un choix explicite. Le journal Python reste dans `.data/events.sqlite3` ; le journal v2 commence à la première réception du nouveau service.
+
+Pour importer en ligne de commande, avec le binaire de la release :
+
+```sh
+./f1-hue --import /chemin/config.yml
 ```
 
-Le flux ne diffuse les drapeaux que pendant une séance. `check-live` indique si la connexion fonctionne et si une séance est en cours.
+Les anciens réglages spécifiques au moteur v1 (`blink_method`, répétitions d’alertes, timings d’extinction) sont convertis quand un équivalent existe ; ils ne constituent pas le moteur v2. Le fichier original sert de sauvegarde.
 
-Configurez le pont et les lampes avec `make setup-wizard`, puis lancez :
-```bash
-make run-live
+## Développer
+
+Prérequis : SDK .NET 10, Node 20.19+ et npm. Aucun de ces outils n’est nécessaire sur les appareils qui utilisent les paquets publiés.
+
+```sh
+scripts/build.sh                  # interface + service + tests C#
+F1_HUE_TEST_BUILD=Release node tests/api-smoke.mjs # routes avec pont simulé et données temporaires
+make web                          # nouvelle version, avec import initial de config.yml
+make web-legacy                   # ancienne interface Python
+make check-live                    # client .NET, aucune commande Hue
 ```
 
-Si l'adresse IP du pont a changé, mettez `bridge_ip` à jour dans `config.yml`. Pour tester les lampes indépendamment de la F1 : `make quick GAP=5`.
+Le wrapper `scripts/dotnet.sh` utilise `.tools/dotnet` s’il existe, sinon le SDK installé. L’interface est embarquée dans le service ; aucune étape npm n’est demandée à l’utilisateur final.
 
-Pour utiliser l'interface web du repo, lancez `make web` et ouvrez [http://localhost:8080](http://localhost:8080). Le fichier `web/static/index.html` dépend du serveur pour ses appels `/api/...`. Par défaut, l'interface n'écoute que sur cet ordinateur. `F1_HUE_WEB_HOST=0.0.0.0` l'expose au réseau local sans authentification : toute personne pouvant joindre le port 8080 pourrait commander les lampes et modifier les réglages. Gardez l'accès local au Mac tant qu'une authentification n'est pas en place. Les adresses IP et `localhost` sont acceptés comme noms d'hôte ; si vous utilisez un nom DNS privé, ajoutez-le explicitement à `F1_HUE_WEB_ALLOWED_HOSTS` (liste séparée par des virgules).
-
-L'interface comporte cinq sections : **Direct** (état, calibration et journal), **Hue** (liaison et lampes), **Tests** (aperçu, séquence et replay), **Drapeaux** (activation et durée de chaque effet) et **Préférences** (luminosité, transitions, restauration et arrêt au damier). Elle fonctionne sans Node ni compilation. Le thème clair est proposé par défaut, avec les choix sombre et automatique.
-
-Les réglages de drapeaux, de durée et de luminosité enregistrés pendant le direct s'appliquent au **prochain événement joué**, après l'offset TV. Ils ne changent pas l'effet déjà actif. Une durée fixe se termine par la restauration de l'état des lampes ; « jusqu'au prochain événement » garde l'effet jusqu'au changement suivant. Un événement désactivé met fin à l'effet précédent sans afficher sa propre couleur. Les clignotements continus restent soumis à la limite de sécurité des Préférences. La sélection des lampes ne peut être modifiée qu'à l'arrêt.
-
-Sur macOS, si l'adresse du pont s'ouvre dans le navigateur mais que le programme indique « No route to host », lancez `make web` depuis l'application **Terminal**. Si vous utilisez le terminal intégré de VS Code, autorisez **Visual Studio Code** dans Réglages Système → Confidentialité et sécurité → Réseau local, puis relancez le serveur. L'accès au réseau local est accordé séparément à chaque application.
-
-Calibrez votre TV avec les drapeaux F1 :
-```bash
-make sync-calibrate
+```sh
+scripts/publish.sh osx-arm64      # application et ZIP Mac
+scripts/publish.sh linux-arm64    # service autonome Raspberry Pi 64 bits
+# Windows : deploy/windows/build.ps1 -Runtime win-x64
 ```
 
-L'interface web propose aussi une comparaison du **temps restant** de la séance avec le chrono TV. Pendant des essais libres ou qualifications, entrez une valeur à venir du chrono TV (par exemple `12:30`) et cliquez sur « Comparer avec l’API » au moment où la TV affiche cette valeur. Le projet lit `ExtrapolatedClock` du flux F1 et propose un offset, sans le sauvegarder avant « Enregistrer cet offset ». La précision est d'environ une seconde ; l'horloge doit avancer et la séance doit être active. Le calcul n'est pas adapté au compteur de tours d'une course.
+Les workflows GitHub vérifient le moteur et les routes sur Mac, Windows et Linux. **Build installers** fabrique les six variantes, teste chaque service empaqueté sur son système et produit les installateurs Windows. Un lancement manuel conserve les artefacts ; un tag `vVERSION` correspondant à `Directory.Build.props` publie une release avec les sommes SHA-256 après validation de tous les jobs. Aucune signature payante n’est requise. Voir [la distribution](docs/releases.md).
 
-Pour une course ou un sprint, armez « Attendre le départ F1 » **avant** le départ, puis cliquez sur « Je vois le départ » quand les feux s'éteignent et que les voitures partent sur la TV. Le repère API est le changement de `SessionStatus` à `Started` ; ce n'est pas une mesure officielle des feux. Si la course a déjà commencé, armez « Attendre le prochain tour API », puis cliquez quand ce nouveau numéro de tour apparaît sur la TV. Dans les deux cas, vérifiez l'offset proposé avant de l'enregistrer. Si Live tourne déjà, redémarrez-le après enregistrement pour appliquer le nouvel offset.
-
-L'offset retarde chaque drapeau à partir de son heure de réception. Ainsi, avec 60 secondes d'offset, un damier reçu à la fin de la séance joue environ 60 secondes plus tard sur les lampes, même si le chrono API est déjà à zéro. Les délais des drapeaux successifs ne s'additionnent pas. Un relevé du GP d'Italie 2025 montre que `SessionStatus: Finished` précède de quelques fractions de seconde le message `CHEQUERED` en essais libres ; le programme accepte désormais ce damier après `Finished`. L'instant exact dépend de la diffusion du flux et des délais réseau.
-
-## Séances enregistrées et effets
-
-Le serveur web partage **une connexion F1** entre le direct, les calibrations et l'écran d'état. Il conserve les drapeaux et les changements de séance ou de tour dans `.data/events.sqlite3` sur ce Mac. Ce journal ne contient pas les paquets bruts de télémétrie. Le fichier est ignoré par Git et réservé à l'utilisateur local.
-
-Le panneau « Drapeaux F1 reçus », à côté de la calibration, affiche les 30 derniers drapeaux du journal avec la date et l'heure de réception sur ce Mac, la séance et, quand Formula 1 l'envoie, l'horodatage UTC du message. Il se rafraîchit toutes les cinq secondes. L'heure F1 n'est pas disponible pour tous les messages, notamment certains changements issus de `TrackStatus`.
-
-Dans l'interface web, la section « Rejouer des drapeaux F1 » propose toujours trois séances passées tirées directement des archives Formula 1 (Bakou, Silverstone et Monza 2025), même si le journal local est vide. Elle affiche aussi les séances enregistrées sur ce Mac dès qu'il y en a. Les archives nécessitent Internet ; les enregistrements locaux fonctionnent hors connexion. Le replay commande les lampes : vérifiez leur sélection avant de cliquer. Le choix ×10 divise par dix le temps entre deux drapeaux (10 minutes deviennent 1 minute) ; la durée des effets Hue reste identique. Les lampes retrouvent leur état à la fin. En ligne de commande :
-
-```bash
-.venv/bin/python f1_hue.py replay                        # lister archives et séances locales
-.venv/bin/python f1_hue.py replay archive:baku-qualifying-2025 --speed 60
-.venv/bin/python f1_hue.py replay CLE_LOCALE --speed 10  # rejouer sur Hue
-```
-
-Les effets sont séparés de la lecture du flux. Par défaut, un drapeau `RED` déclenche le pattern `RED`. Vous pouvez changer cette correspondance dans `config.yml` :
-
-```yaml
-rules:
-  flag_patterns:
-    RED: RED
-    BLUE: null   # ignorer ce drapeau
-```
-
-Les noms à droite doivent exister dans `patterns`. L'interface enregistre les activations dans `flags.enabled` et les durées dans `patterns.<DRAPEAU>.duration_seconds` (`null` signifie « jusqu'au prochain événement »). Ces réglages ont priorité sur l'ancien `ignore_blue` ; le bleu reste désactivé par défaut. Les changements prennent effet au prochain drapeau joué, sans relancer le mode Live. Voir [l'architecture](docs/architecture.md) pour les modules et les limites du flux.
-
-Sources : [client live timing FastF1](https://github.com/theOehrly/Fast-F1/blob/main/fastf1/livetiming/client.py), [API locale Hue](https://developers.meethue.com/support/).
+Voir [l’architecture](docs/architecture.md), [l’hébergement](docs/hosting.md), [le rapport de vérification](docs/verification.md) et [l’ancienne documentation Python](docs/legacy-python.md).
