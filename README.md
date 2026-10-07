@@ -6,7 +6,7 @@ La version **2.0 preview** utilise C#/.NET 10, une interface TypeScript intégr�
 
 ## Utiliser l’application
 
-**[Télécharger l’application dans Releases](https://github.com/Oswaaaald/f1_flags_hue/releases)**, puis choisir le fichier correspondant à son système dans **Assets**.
+**[Télécharger l’application](https://github.com/Oswaaaald/f1_flags_hue/releases)** : les liens **Mac** et **Windows** sont en tête de la page. Les autres appareils sont dans **Autres appareils et installation avancée**.
 
 ### macOS
 

@@ -114,7 +114,8 @@ jobs:
             args+=(--verify-tag)
           fi
           node scripts/check-release-tag.mjs "$RELEASE_TAG"
+          node scripts/release-notes.mjs > "$RUNNER_TEMP/f1-hue-release-notes.md"
           cd release
           sha256sum *.zip *.tar.gz *.exe *.tar > SHA256SUMS
           if [[ "$RELEASE_TAG" == *-* ]]; then args+=(--prerelease); fi
-          gh release create "$RELEASE_TAG" --title "F1 Hue Sync $RELEASE_TAG" --generate-notes "${args[@]}" ./*
+          gh release create "$RELEASE_TAG" --title "F1 Hue Sync $RELEASE_TAG" --notes-file "$RUNNER_TEMP/f1-hue-release-notes.md" "${args[@]}" ./*
