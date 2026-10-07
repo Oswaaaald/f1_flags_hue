@@ -1,17 +1,27 @@
 import unittest
 import queue
 import tempfile
+import os
+import stat
 from pathlib import Path
 from datetime import datetime, timezone
 from unittest.mock import patch
 
 from event_journal import EventJournal
+from baseline import BaselineStore
 from hue import HueBridgeConnectionError
 from live_events import LiveEvent
 from web.server import app
+from web.server import _save_persist_cache
 
 
 class WebSecurityTests(unittest.TestCase):
+    def test_bridge_link_only_accepts_local_ipv4(self):
+        with patch("web.server.HueBridge") as bridge:
+            response = app.test_client().post("/api/bridge/link", json={"bridge_ip": "8.8.8.8"})
+        self.assertEqual(response.status_code, 400)
+        bridge.assert_not_called()
+
     def test_config_api_does_not_return_hue_key(self):
         conf = {"bridge_ip": "192.168.1.2", "username": "private-local-key", "sync": {}}
         with patch("web.server.ensure_conf", return_value=conf):
@@ -19,6 +29,12 @@ class WebSecurityTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertNotIn("private-local-key", response.get_data(as_text=True))
         self.assertEqual(response.json["username"], "configuré")
+
+    def test_static_routes_cannot_serve_local_configuration(self):
+        client = app.test_client()
+        for path in ("/config.yml", "/..%2Fconfig.yml", "/%2e%2e/config.yml"):
+            with self.subTest(path=path):
+                self.assertEqual(client.get(path).status_code, 404)
 
     def test_config_api_rejects_arbitrary_key_change(self):
         with patch("web.server.ensure_conf") as load, patch("web.server.save_conf") as save:
@@ -31,6 +47,65 @@ class WebSecurityTests(unittest.TestCase):
         response = app.test_client().post("/api/start", json={"mode": "live"},
                                           headers={"Origin": "https://example.com"})
         self.assertEqual(response.status_code, 403)
+
+    def test_cross_site_read_cannot_trigger_api_side_effects(self):
+        with patch("web.server.live_service") as service:
+            response = app.test_client().get("/api/status", headers={"Sec-Fetch-Site": "cross-site"})
+        self.assertEqual(response.status_code, 403)
+        service.assert_not_called()
+
+    def test_browser_cannot_embed_control_panel_in_another_site(self):
+        response = app.test_client().get("/")
+        self.assertEqual(response.headers["X-Frame-Options"], "DENY")
+        self.assertEqual(response.headers["Content-Security-Policy"], "frame-ancestors 'none'")
+        self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
+        response.close()
+
+    def test_untrusted_host_cannot_read_or_control_local_api(self):
+        with patch("web.server.RUNNER") as runner:
+            client = app.test_client()
+            read = client.get("/api/config", base_url="http://evil.example:8080")
+            write = client.post("/api/start", json={"mode": "live"},
+                                base_url="http://evil.example:8080",
+                                headers={"Origin": "http://evil.example:8080"})
+        self.assertEqual(read.status_code, 400)
+        self.assertEqual(write.status_code, 400)
+        runner.start_live.assert_not_called()
+
+    def test_ip_and_explicitly_allowed_host_remain_accessible(self):
+        client = app.test_client()
+        local = client.get("/", base_url="http://192.168.1.20:8080")
+        self.assertEqual(local.status_code, 200)
+        local.close()
+        with patch.dict(os.environ, {"F1_HUE_WEB_ALLOWED_HOSTS": "f1.local"}):
+            named = client.get("/", base_url="http://f1.local:8080")
+            self.assertEqual(named.status_code, 200)
+            named.close()
+
+    def test_large_json_body_is_rejected_before_configuration_change(self):
+        with patch("web.server.save_conf") as save:
+            response = app.test_client().post("/api/config", json={
+                "sync": {"offset_seconds": 1}, "padding": "x" * 65536})
+        self.assertEqual(response.status_code, 413)
+        save.assert_not_called()
+
+    def test_local_state_files_are_private_after_save(self):
+        with tempfile.TemporaryDirectory() as directory:
+            baseline = BaselineStore(directory, {"baseline": {"persist_path": "baseline.json"}})
+            baseline_path = Path(directory) / "baseline.json"
+            baseline_path.write_text("{}")
+            baseline_path.chmod(0o644)
+            baseline.data = {"1": {"on": True}}
+            baseline._save()
+
+            cache_path = Path(directory) / "bridges_cache.json"
+            cache_path.write_text("{}")
+            cache_path.chmod(0o644)
+            with patch("web.server.CACHE_FILE", cache_path):
+                _save_persist_cache([{"ip": "192.168.1.2"}])
+
+            self.assertEqual(stat.S_IMODE(baseline_path.stat().st_mode), 0o600)
+            self.assertEqual(stat.S_IMODE(cache_path.stat().st_mode), 0o600)
 
     def test_bridge_link_reports_unreachable_bridge(self):
         with patch("web.server.HueBridge") as bridge, patch("web.server.discover_bridge_ip", return_value=None):

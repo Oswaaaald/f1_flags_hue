@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import os, sys, json, time, threading, queue
+import os, sys, json, time, threading, queue, tempfile
 import requests
 import socket, re, ipaddress
 import xml.etree.ElementTree as ET
@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, List, Dict
+from urllib.parse import urlsplit
 
 from flask import Flask, jsonify, request, Response, send_from_directory
 
@@ -28,18 +29,63 @@ from hue_targets import prepare_sync_group
 from live_events import LiveEvent
 from live_service import LiveTimingService
 from session_clock import compare_tv_clock, parse_tv_remaining
+from settings import FLAGS, apply_settings_patch, effect_duration, public_settings
 
-app = Flask("server", static_url_path="", static_folder="static")
+app = Flask("server", static_url_path="", static_folder=os.path.join(os.path.dirname(__file__), "static"))
+app.config["MAX_CONTENT_LENGTH"] = 64 * 1024
+CONFIG_WRITE_LOCK = threading.RLock()
+
+
+def _json_object(force=False):
+    body = request.get_json(force=force, silent=True)
+    if body is None:
+        return {}
+    return body if isinstance(body, dict) else None
+
+
+def _trusted_request_host() -> bool:
+    """Accept IP literals and explicitly configured names, not arbitrary DNS names."""
+    try:
+        parsed = urlsplit(f"http://{request.headers.get('Host', '')}")
+        hostname = parsed.hostname
+        if not hostname or parsed.username or parsed.password or parsed.path or parsed.query or parsed.fragment:
+            return False
+        parsed.port  # reject malformed ports
+    except ValueError:
+        return False
+    hostname = hostname.lower().rstrip(".")
+    if hostname == "localhost":
+        return True
+    try:
+        ipaddress.ip_address(hostname)
+        return True
+    except ValueError:
+        allowed = {name.strip().lower().rstrip(".") for name in
+                   os.environ.get("F1_HUE_WEB_ALLOWED_HOSTS", "").split(",") if name.strip()}
+        return hostname in allowed
 
 
 @app.before_request
 def reject_cross_origin_writes():
+    if not _trusted_request_host():
+        return jsonify({"ok": False, "error": "Nom d’hôte non autorisé."}), 400
+    if request.path.startswith("/api/") and request.headers.get("Sec-Fetch-Site") == "cross-site":
+        return jsonify({"ok": False, "error": "Origine non autorisée."}), 403
     if request.method not in ("POST", "PUT", "PATCH", "DELETE"):
         return None
     origin = request.headers.get("Origin")
     if (origin and origin.rstrip("/") != request.host_url.rstrip("/")) or request.headers.get("Sec-Fetch-Site") == "cross-site":
         return jsonify({"ok": False, "error": "Origine non autorisée."}), 403
     return None
+
+
+@app.after_request
+def set_security_headers(response):
+    response.headers["Content-Security-Policy"] = "frame-ancestors 'none'"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    return response
 
 
 # =========================
@@ -100,6 +146,9 @@ class Runner:
         self.mode = None  # "live" | "test"
         self.started_at: Optional[float] = None
         self.last_flag = None
+        self.active_pattern = None
+        self._last_effect_duration = None
+        self._last_effect_started = None
         self.gap = 1.0
         self._last_stop_ts = 0.0  # anti-spam STOP
         self._start_lock = threading.Lock()
@@ -110,11 +159,16 @@ class Runner:
             "mode": self.mode,
             "started_at": self.started_at,
             "last_flag": self.last_flag,
+            "active_pattern": self.active_pattern,
             "gap": self.gap,
         }
 
     def _prepare_common(self):
         self.conf = ensure_conf()
+        self.last_flag = None
+        self.active_pattern = None
+        self._last_effect_duration = None
+        self._last_effect_started = None
 
         if not self.conf.get("bridge_ip") or not self.conf.get("username"):
             raise RuntimeError("Bridge non configuré (bridge_ip/username). Va dans l’onglet Setup.")
@@ -124,7 +178,10 @@ class Runner:
 
         self.bridge, discovered = connect_bridge(self.conf)
         if discovered:
-            save_conf(self.conf)
+            with CONFIG_WRITE_LOCK:
+                current = ensure_conf()
+                current["bridge_ip"] = self.conf["bridge_ip"]
+                save_conf(current)
             HUB.publish({"type": "bridge_discovered", "bridge_ip": self.conf["bridge_ip"]})
 
         # Multi-groupes / lampes -> lightgroup
@@ -137,12 +194,37 @@ class Runner:
             n = self.baseline.capture(self.bridge, self.conf)
             HUB.publish({"type": "baseline", "captured": n})
 
-        self.engine = LightEngine(self.bridge, self.conf, self.stop_evt, baseline=self.baseline)
+        self.engine = LightEngine(
+            self.bridge, self.conf, self.stop_evt, baseline=self.baseline,
+            on_error=lambda exc: HUB.publish({"type": "error", "message": f"Hue : {exc}"}),
+            on_state=self._effect_state,
+        )
         self.engine.start()
+
+    def _effect_state(self, pattern):
+        self.active_pattern = pattern
+        HUB.publish({"type": "effect", "pattern": pattern})
+
+    def _skip_flag(self, event):
+        self.last_flag = str(event.value)
+        self._last_effect_duration = None
+        self._last_effect_started = None
+        HUB.publish({"type": "flag_skipped", "flag": self.last_flag})
+
+    def _remember_effect(self, pattern):
+        self._last_effect_duration = effect_duration(ensure_conf()["patterns"][pattern])
+        self._last_effect_started = time.monotonic()
+
+    def _wait_for_last_effect(self):
+        if self._last_effect_started is None or self.stop_evt.is_set():
+            return
+        if self._last_effect_duration is not None:
+            remaining = self._last_effect_started + self._last_effect_duration - time.monotonic()
+            self.stop_evt.wait(max(0, remaining) + 0.1)
 
     def _restore_on_exit(self):
         try:
-            bconf = self.conf.get("baseline", {}) or {}
+            bconf = ensure_conf().get("baseline", {}) or {}
             if bconf.get("restore_on_exit", True):
                 fade = int(max(0, bconf.get("fade_tenths", 5)))
                 n = self.baseline.restore(self.bridge, self.conf, fade_tenths=fade)
@@ -190,12 +272,17 @@ class Runner:
 
             def report(event, pattern):
                 self.last_flag = str(event.value)
+                self._remember_effect(pattern)
                 HUB.publish({"type": "flag", "flag": str(event.value),
                              "pattern": pattern, "ts": time.time()})
 
             play_effects(service.events(subscription, self.stop_evt, {"flag"}),
                          self.engine, self.conf, self.stop_evt,
-                         offset_seconds=sync_off, on_play=report)
+                         offset_seconds=sync_off, on_play=report,
+                         conf_provider=ensure_conf,
+                         on_skip=self._skip_flag)
+            if self.last_flag == "CHEQUERED" and ensure_conf().get("flags", {}).get("exit_on_chequered", False):
+                self._wait_for_last_effect()
         except Exception as e:
             HUB.publish({"type": "error", "message": str(e)})
         finally:
@@ -210,7 +297,7 @@ class Runner:
             self.t = None
             HUB.publish({"type": "stopped"})
 
-    def _run_test(self, gap: float):
+    def _run_test(self, gap: float, preview_flag=None):
         try:
             self._prepare_common()
         except Exception as e:
@@ -218,25 +305,32 @@ class Runner:
             self.t = None
             return
 
-        self.mode = "test"; self.gap = float(gap)
+        self.mode = "preview" if preview_flag else "test"; self.gap = float(gap)
         self.started_at = time.time()
         HUB.publish({"type": "running", "mode": self.mode, "gap": self.gap})
 
-        seq = ["GREEN","YELLOW","SC","SC_ENDING","VSC","VSC_ENDING","RED","GREEN","CHEQUERED"]
+        seq = [preview_flag] if preview_flag else ["GREEN","YELLOW","SC","SC_ENDING","VSC","VSC_ENDING","RED","BLUE","GREEN","CHEQUERED"]
 
         try:
-            rules = EffectRules(self.conf)
+            last_started = None
+            last_duration = None
             for f in seq:
                 if self.stop_evt.is_set(): break
                 flag = self._normalize_flag(f)
+                current = ensure_conf()
+                pattern = flag if preview_flag else EffectRules(current).pattern_for(LiveEvent(kind="flag", value=flag))
+                if not pattern:
+                    continue
                 self.last_flag = flag
                 HUB.publish({"type": "flag", "flag": flag, "ts": time.time()})
-                pattern = rules.pattern_for(LiveEvent(kind="flag", value=flag))
-                if pattern:
-                    self.engine.play(pattern)
-                end = time.monotonic() + max(0.1, self.gap)
+                self.engine.play(pattern, effect_conf=current)
+                last_duration = effect_duration(current["patterns"][pattern])
+                last_started = time.monotonic()
+                end = last_started + max(0.1, self.gap)
                 while time.monotonic() < end:
                     if self.stop_evt.wait(0.02): break
+            if not preview_flag and last_started is not None and last_duration is not None and not self.stop_evt.is_set():
+                self.stop_evt.wait(max(0, last_started + last_duration - time.monotonic()) + 0.1)
         finally:
             try:
                 if self.engine:
@@ -264,11 +358,15 @@ class Runner:
         try:
             def report(event, pattern):
                 self.last_flag = str(event.value)
+                self._remember_effect(pattern)
                 HUB.publish({"type": "flag", "flag": str(event.value), "pattern": pattern,
                              "ts": time.time(), "replay": True})
 
             play_effects(replay_events(recorded, speed, self.stop_evt),
-                         self.engine, self.conf, self.stop_evt, on_play=report)
+                         self.engine, self.conf, self.stop_evt, on_play=report,
+                         conf_provider=ensure_conf,
+                         on_skip=self._skip_flag)
+            self._wait_for_last_effect()
         except Exception as exc:
             HUB.publish({"type": "error", "message": str(exc)})
         finally:
@@ -296,6 +394,17 @@ class Runner:
                 return False
             self.stop_evt.clear()
             self.t = threading.Thread(target=self._run_test, args=(gap,), daemon=True)
+            self.t.start()
+            return True
+
+    def start_preview(self, flag: str):
+        with self._start_lock:
+            if self.t and self.t.is_alive():
+                return False
+            self.stop_evt.clear()
+            duration = effect_duration((ensure_conf().get("patterns") or {})[flag])
+            gap = min(30, duration + 0.25) if duration is not None else 10
+            self.t = threading.Thread(target=self._run_test, args=(gap, flag), daemon=True)
             self.t.start()
             return True
 
@@ -354,12 +463,19 @@ def _load_persist_cache():
     return [], 0.0
 
 def _save_persist_cache(bridges):
+    temporary = None
     try:
-        CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with CACHE_FILE.open("w") as f:
+        CACHE_FILE.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        descriptor, temporary = tempfile.mkstemp(prefix=".bridges-", dir=CACHE_FILE.parent)
+        with os.fdopen(descriptor, "w") as f:
             json.dump({"ts": time.time(), "bridges": bridges}, f, indent=2)
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, CACHE_FILE)
     except Exception:
         pass
+    finally:
+        if temporary and os.path.exists(temporary):
+            os.unlink(temporary)
 
 def _local_ipv4() -> str:
     """Trouve l'IP locale (ex: 192.168.0.16) sans dépendances externes."""
@@ -561,8 +677,13 @@ def _discover_bridges_all(timeout=2.5) -> List[Dict[str,str]]:
 # =========================
 
 @app.get("/")
+@app.get("/direct")
+@app.get("/hue")
+@app.get("/tests")
+@app.get("/flags")
+@app.get("/preferences")
 def index():
-    return send_from_directory("static", "index.html")
+    return send_from_directory(app.static_folder, "index.html")
 
 
 @app.get("/api/events")
@@ -598,9 +719,29 @@ def api_config():
         "sync": conf.get("sync", {}),
     })
 
+
+@app.get("/api/settings")
+def api_settings():
+    return jsonify(public_settings(ensure_conf()))
+
+
+@app.patch("/api/settings")
+def api_settings_patch():
+    body = request.get_json(silent=True)
+    try:
+        with CONFIG_WRITE_LOCK:
+            updated = apply_settings_patch(ensure_conf(), body)
+            save_conf(updated)
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    HUB.publish({"type": "settings_updated"})
+    return jsonify({"ok": True, **public_settings(updated)})
+
 @app.post("/api/config")
 def api_config_set():
-    body = request.get_json(force=True, silent=True) or {}
+    body = _json_object(force=True)
+    if body is None:
+        return jsonify({"ok": False, "error": "Un objet JSON est attendu."}), 400
     sync = body.get("sync")
     if not isinstance(sync, dict) or "offset_seconds" not in sync:
         return jsonify({"ok": False, "error": "Seul sync.offset_seconds peut être modifié ici."}), 400
@@ -610,16 +751,19 @@ def api_config_set():
             raise ValueError
     except (TypeError, ValueError):
         return jsonify({"ok": False, "error": "Offset invalide."}), 400
-    conf = ensure_conf()
-    conf.setdefault("sync", {})["offset_seconds"] = offset
-    save_conf(conf)
+    with CONFIG_WRITE_LOCK:
+        conf = ensure_conf()
+        conf.setdefault("sync", {})["offset_seconds"] = offset
+        save_conf(conf)
     return jsonify({"ok": True})
 
 
 @app.post("/api/sync/compare-clock")
 def api_sync_compare_clock():
     clicked_at = datetime.now(timezone.utc)
-    body = request.get_json(silent=True) or {}
+    body = _json_object()
+    if body is None:
+        return jsonify({"ok": False, "error": "Un objet JSON est attendu."}), 400
     tv_remaining = body.get("tv_remaining")
     try:
         parse_tv_remaining(tv_remaining)
@@ -721,7 +865,9 @@ def api_sync_flag_stream():
 
 @app.post("/api/start")
 def api_start():
-    body = request.get_json(force=True, silent=True) or {}
+    body = _json_object(force=True)
+    if body is None:
+        return jsonify({"ok": False, "error": "Un objet JSON est attendu."}), 400
     mode = body.get("mode","live")
     if mode == "live":
         started = RUNNER.start_live()
@@ -736,6 +882,19 @@ def api_start():
     else:
         return jsonify({"ok": False, "error": "Mode inconnu."}), 400
     if not started:
+        return jsonify({"ok": False, "error": "Un mode est déjà en cours."}), 409
+    return jsonify({"ok": True})
+
+
+@app.post("/api/test/preview")
+def api_test_preview():
+    body = _json_object()
+    if body is None:
+        return jsonify({"ok": False, "error": "Un objet JSON est attendu."}), 400
+    flag = body.get("flag")
+    if flag not in FLAGS:
+        return jsonify({"ok": False, "error": "Drapeau inconnu."}), 400
+    if not RUNNER.start_preview(flag):
         return jsonify({"ok": False, "error": "Un mode est déjà en cours."}), 409
     return jsonify({"ok": True})
 
@@ -780,7 +939,9 @@ def api_replay_scenarios():
 
 @app.post("/api/replay/start")
 def api_replay_start():
-    body = request.get_json(silent=True) or {}
+    body = _json_object()
+    if body is None:
+        return jsonify({"ok": False, "error": "Un objet JSON est attendu."}), 400
     scenario_id = str(body.get("scenario_id") or "").strip()
     session_key = str(body.get("session_key") or "").strip()
     try:
@@ -843,10 +1004,25 @@ def api_bridge_discover():
 
 @app.post("/api/bridge/link")
 def api_bridge_link():
-    body = request.get_json(force=True, silent=True) or {}
-    ip = (body.get("bridge_ip") or "").strip()
+    body = _json_object(force=True)
+    if body is None:
+        return jsonify({"ok": False, "error": "Un objet JSON est attendu."}), 400
+    raw_ip = body.get("bridge_ip")
+    ip = raw_ip.strip() if isinstance(raw_ip, str) else ""
     if not ip:
         return jsonify({"ok": False, "error": "bridge_ip manquant"}), 400
+    try:
+        address = ipaddress.ip_address(ip)
+        private_networks = (
+            ipaddress.ip_network("10.0.0.0/8"),
+            ipaddress.ip_network("172.16.0.0/12"),
+            ipaddress.ip_network("192.168.0.0/16"),
+            ipaddress.ip_network("169.254.0.0/16"),
+        )
+        if address.version != 4 or not any(address in network for network in private_networks):
+            raise ValueError
+    except ValueError:
+        return jsonify({"ok": False, "error": "Adresse IPv4 locale invalide."}), 400
     br = HueBridge(ip, "")
     try:
         username = br.register(devicetype="f1-hue#webui")
@@ -872,10 +1048,11 @@ def api_bridge_link():
             )}), 400
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 400
-    conf = ensure_conf()
-    conf["bridge_ip"] = ip
-    conf["username"] = username
-    save_conf(conf)
+    with CONFIG_WRITE_LOCK:
+        conf = ensure_conf()
+        conf["bridge_ip"] = ip
+        conf["username"] = username
+        save_conf(conf)
     _save_persist_cache([{"id": ip, "ip": ip, "name": f"Hue Bridge {ip}"}])
     _DISC_CACHE["ts"] = 0.0
     return jsonify({"ok": True, "bridge_ip": ip, "username": "configuré"})
@@ -883,14 +1060,15 @@ def api_bridge_link():
 @app.post("/api/bridge/unlink")
 def api_bridge_unlink():
     RUNNER.stop()
-    conf = ensure_conf()
-    # Effacer IP + username + sélection
-    conf["bridge_ip"] = None
-    conf["username"] = None
-    conf["group_id"] = None
-    conf["group_ids"] = []
-    conf["light_ids"] = []
-    save_conf(conf)
+    with CONFIG_WRITE_LOCK:
+        conf = ensure_conf()
+        # Effacer IP + username + sélection
+        conf["bridge_ip"] = None
+        conf["username"] = None
+        conf["group_id"] = None
+        conf["group_ids"] = []
+        conf["light_ids"] = []
+        save_conf(conf)
     # on garde le cache disque (utile), mais on invalide le cache mémoire
     _DISC_CACHE["ts"] = 0.0
     HUB.publish({"type": "stopped"})
@@ -900,33 +1078,27 @@ def _ensure_hue_from_conf():
     conf = ensure_conf()
     bridge, discovered = connect_bridge(conf)
     if discovered:
-        save_conf(conf)
+        with CONFIG_WRITE_LOCK:
+            current = ensure_conf()
+            current["bridge_ip"] = conf["bridge_ip"]
+            save_conf(current)
     return bridge, conf
 
 @app.get("/api/hue/lights")
 def api_hue_lights():
-    # IMPORTANT: si non configuré -> 200 {}
     try:
         br, _ = _ensure_hue_from_conf()
-    except Exception:
-        return jsonify({})
-    try:
         return jsonify(br.lights())
-    except Exception:
-        # Réseau cassé -> ne pas casser l’UI
-        return jsonify({})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 503
 
 @app.get("/api/hue/groups")
 def api_hue_groups():
-    # IMPORTANT: si non configuré -> 200 {}
     try:
         br, _ = _ensure_hue_from_conf()
-    except Exception:
-        return jsonify({})
-    try:
         return jsonify(br.groups())
-    except Exception:
-        return jsonify({})
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 503
 
 @app.get("/api/setup/selection")
 def api_setup_selection_get():
@@ -940,37 +1112,53 @@ def api_setup_selection_get():
 
 @app.post("/api/setup/targets")
 def api_setup_targets():
-    body = request.get_json(force=True, silent=True) or {}
-    conf = ensure_conf()
+    body = _json_object(force=True)
+    if body is None:
+        return jsonify({"ok": False, "error": "Un objet JSON est attendu."}), 400
+    if RUNNER.t is not None and RUNNER.t.is_alive():
+        return jsonify({"ok": False, "error": "Arrête le mode en cours avant de changer les lampes."}), 409
+    def ids(value, allow_zero=False):
+        if not isinstance(value, list) or not value:
+            raise ValueError("Sélection vide.")
+        parsed = []
+        for item in value:
+            if isinstance(item, bool) or not str(item).isdigit():
+                raise ValueError("Identifiant Hue invalide.")
+            number = int(item)
+            if number < (0 if allow_zero else 1):
+                raise ValueError("Identifiant Hue invalide.")
+            parsed.append(number)
+        return sorted(set(parsed))
 
-    if "group_id" in body and body["group_id"] is not None:
-        gid = int(body["group_id"])
-        conf["group_id"] = gid
-        conf["group_ids"] = []
-        conf["light_ids"] = []
-    elif "group_ids" in body:
-        gids = [int(x) for x in (body.get("group_ids") or [])]
-        if not gids:
-            return jsonify({"ok": False, "error": "group_ids vide"}), 400
-        conf["group_id"] = None
-        conf["group_ids"] = gids
-        conf["light_ids"] = []
-    elif "light_ids" in body:
-        lids = [int(x) for x in (body.get("light_ids") or [])]
-        if not lids:
-            return jsonify({"ok": False, "error": "light_ids vide"}), 400
-        conf["group_id"] = None
-        conf["group_ids"] = []
-        conf["light_ids"] = lids
-    else:
-        return jsonify({"ok": False, "error": "Aucun champ de sélection fourni"}), 400
-
-    save_conf(conf)
-    return jsonify({"ok": True, "selection": {
-        "group_id": conf.get("group_id"),
-        "group_ids": conf.get("group_ids", []),
-        "light_ids": conf.get("light_ids", []),
-    }})
+    try:
+        if "group_id" in body and body["group_id"] is not None:
+            gid = ids([body["group_id"]], allow_zero=True)[0]
+            proposed = {"group_id": gid, "group_ids": [], "light_ids": []}
+        elif "group_ids" in body:
+            proposed = {"group_id": None, "group_ids": ids(body["group_ids"], allow_zero=True), "light_ids": []}
+        elif "light_ids" in body:
+            proposed = {"group_id": None, "group_ids": [], "light_ids": ids(body["light_ids"])}
+        else:
+            raise ValueError("Aucune sélection fournie.")
+        bridge, _ = _ensure_hue_from_conf()
+        lights = bridge.lights()
+        groups = bridge.groups() if proposed["group_id"] not in (0, None) or proposed["group_ids"] else {}
+        if proposed["group_id"] == 0 and not lights:
+            raise ValueError("Aucune lampe disponible sur le pont.")
+        if proposed["group_id"] not in (0, None) and not (groups.get(str(proposed["group_id"])) or {}).get("lights"):
+            raise ValueError("Zone Hue vide ou introuvable.")
+        for gid in proposed["group_ids"]:
+            if gid != 0 and not (groups.get(str(gid)) or {}).get("lights"):
+                raise ValueError(f"Zone Hue {gid} vide ou introuvable.")
+        if any(str(lid) not in lights for lid in proposed["light_ids"]):
+            raise ValueError("Une lampe sélectionnée est introuvable.")
+    except (ValueError, HueBridgeConnectionError, requests.RequestException) as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    with CONFIG_WRITE_LOCK:
+        conf = ensure_conf()
+        conf.update(proposed)
+        save_conf(conf)
+    return jsonify({"ok": True, "selection": proposed})
 
 
 if __name__ == "__main__":

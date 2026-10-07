@@ -153,5 +153,7 @@ class ServiceTests(unittest.TestCase):
         with patch.object(runner, "_prepare_common"), \
              patch.object(runner, "_restore_on_exit"):
             runner._run_replay([LiveEvent(kind="flag", value="RED", session_key="42")], 100)
-        runner.engine.play.assert_called_once_with("RED")
+        runner.engine.play.assert_called_once()
+        self.assertEqual(runner.engine.play.call_args.args, ("RED",))
+        self.assertIn("patterns", runner.engine.play.call_args.kwargs["effect_conf"])
         runner.engine.stop.assert_called_once()

@@ -1,209 +1,208 @@
-import time, threading
-from queue import SimpleQueue, Empty
-from hue import HueBridge
+"""Serialize Hue writes so a cancelled effect cannot overwrite a newer one."""
+
+import copy
+import threading
+import time
+from queue import Empty, SimpleQueue
+
+from settings import effect_duration
+
 
 class LightEngine:
-    """
-    - Préemption: alert:none, puis nouvelle couleur (fondu configurable).
-    - Blink via 'alert' (select/lselect) ultra régulier.
-    - Support 'ct' (évite le blanc rosé).
-    - Baseline: restore quand un pattern se termine naturellement (pas en cas de préemption).
-    - ✅ Si light_ids sont utilisés, on crée un LightGroup et on cible le groupe pour synchroniser.
-    """
-
-    def __init__(self, bridge: HueBridge, conf: dict, stop_evt: threading.Event, baseline=None):
-        self.bridge = bridge; self.conf = conf; self.stop_evt = stop_evt
+    def __init__(self, bridge, conf: dict, stop_evt: threading.Event, baseline=None, on_error=None, on_state=None):
+        self.bridge = bridge
+        self.conf = conf  # Fixed Hue target for this run.
+        self.stop_evt = stop_evt
         self.baseline = baseline
-        self.cmd = SimpleQueue(); self.thread = threading.Thread(target=self._run, daemon=True)
-        self.running = threading.Event(); self.running.set()
-        self.cancel_event = threading.Event()
+        self.on_error = on_error
+        self.on_state = on_state
+        self.cmd = SimpleQueue()
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.running = threading.Event()
+        self.running.set()
+        self._lock = threading.Lock()
+        self._cancel = None
 
-    # --- helpers cibles ---
     def _targets(self):
-        """Retourne (light_ids, group_id) en privilégiant le groupe sync si présent."""
-        gid = self.conf.get("group_id", None)
+        gid = self.conf.get("group_id")
         if gid is None:
-            gid = self.conf.get("_sync_group_id", None)
+            gid = self.conf.get("_sync_group_id")
         if gid is not None:
-            return (None, gid)
-        return (self.conf.get("_resolved_light_ids") or self.conf.get("light_ids") or None, None)
+            return None, gid
+        ids = self.conf.get("_resolved_light_ids") or self.conf.get("light_ids")
+        if ids:
+            return ids, None
+        raise RuntimeError("Aucune lampe Hue sélectionnée.")
 
     def start(self):
-        if not self.thread.is_alive(): self.thread.start()
+        if not self.thread.is_alive():
+            self.thread.start()
+
+    def _enqueue(self, kind, name=None, effect_conf=None):
+        with self._lock:
+            if not self.running.is_set():
+                return
+            if self._cancel is not None:
+                self._cancel.set()
+            cancel = threading.Event()
+            self._cancel = cancel
+            self.cmd.put((kind, name, copy.deepcopy(effect_conf or self.conf), cancel))
+
+    def play(self, pattern_name: str, effect_conf=None):
+        self._enqueue("play", pattern_name, effect_conf)
+
+    def clear(self, effect_conf=None):
+        self._enqueue("clear", effect_conf=effect_conf)
 
     def stop(self):
-        self.running.clear(); self.stop_evt.set(); self.cancel_event.set()
-        lids, gid = self._targets()
-        try: self.bridge.stop_alert(lids, gid)
-        except Exception: pass
-        try: self.cmd.put_nowait(("stop", None))
-        except Exception: pass
-        if self.thread.is_alive(): self.thread.join()
+        with self._lock:
+            self.running.clear()
+            self.stop_evt.set()
+            if self._cancel is not None:
+                self._cancel.set()
+            self.cmd.put(("stop", None, None, None))
+        if self.thread.is_alive():
+            self.thread.join()
+        if self.on_state:
+            self.on_state(None)
 
-    def _tt(self, p: dict, key: str, default_key: str) -> int:
-        if p and key in p and p[key] is not None:
-            return int(max(0, p[key]))
-        if default_key in self.conf and self.conf[default_key] is not None:
-            return int(max(0, self.conf[default_key]))
-        return 0
+    @staticmethod
+    def _tt(pattern, conf, key):
+        return max(0, int(pattern.get(key, conf.get(key, 0)) or 0))
 
-    def _apply_from_pattern(self, p: dict, bri_value: int, tt: int):
+    def _apply(self, pattern, conf):
         lids, gid = self._targets()
-        data = {"on": True, "bri": max(1, min(254, int(bri_value))), "transitiontime": int(max(0, tt))}
-        if "ct" in p:
-            data["ct"] = int(p["ct"])
+        maximum = int(conf.get("bri", 254))
+        desired = int(pattern.get("bri_override", maximum))
+        payload = {"on": True, "bri": max(1, min(254, maximum, desired)),
+                   "transitiontime": self._tt(pattern, conf, "transition_tenths")}
+        if "ct" in pattern:
+            payload["ct"] = int(pattern["ct"])
         else:
-            xy = self.conf["colors_xy"][p["color"]]
-            data["xy"] = xy
-        self.bridge.set_state(data, lids, gid)
+            payload["xy"] = conf["colors_xy"][pattern["color"]]
+        self.bridge.set_state(payload, lids, gid)
 
-    def play(self, pattern_name: str):
-        # 1) annule pattern/clignotement courant
-        self.cancel_event.set()
+    def _restore(self, conf):
+        if self.baseline:
+            fade = max(0, int((conf.get("baseline") or {}).get("fade_tenths", 5)))
+            self.baseline.restore(self.bridge, self.conf, fade_tenths=fade)
+
+    def _wait(self, cancel, seconds):
+        if seconds is None:
+            while self.running.is_set() and not self.stop_evt.is_set() and not cancel.wait(0.1):
+                pass
+            return False
+        return not cancel.wait(max(0, seconds)) and self.running.is_set() and not self.stop_evt.is_set()
+
+    def _play(self, name, conf, cancel):
+        if cancel.is_set() or self.stop_evt.is_set():
+            return
+        pattern = (conf.get("patterns") or {}).get(name)
+        if not pattern:
+            raise ValueError(f"Pattern Hue inconnu : {name}")
         lids, gid = self._targets()
         self.bridge.stop_alert(lids, gid)
-        # 2) applique couleur/bri du nouveau pattern
-        p = self.conf["patterns"].get(pattern_name)
-        if p:
-            bri = int(p.get("bri_override", self.conf["bri"]))
-            base_tt = self._tt(p, "transition_tenths", "transition_tenths")
-            self._apply_from_pattern(p, bri, base_tt)
-        # 3) ordonne au moteur
-        try: self.cmd.put_nowait(("play", pattern_name))
-        except Exception: pass
+        if cancel.is_set():
+            return
+        self._apply(pattern, conf)
+        if self.on_state:
+            self.on_state(name)
+        duration = effect_duration(pattern)
+        mode = pattern.get("mode")
+        if mode == "solid":
+            if self._wait(cancel, duration):
+                self._restore(conf)
+                if self.on_state:
+                    self.on_state(None)
+            return
+        if mode != "blink":
+            raise ValueError(f"Mode Hue inconnu : {mode}")
 
-    def _restore_baseline_if_enabled(self):
-        bconf = self.conf.get("baseline", {}) or {}
-        if not bconf.get("restore_on_idle", True): return
-        if not self.baseline: return
-        fade = int(max(0, bconf.get("fade_tenths", 5)))
-        self.baseline.restore(self.bridge, self.conf, fade_tenths=fade)
+        watchdog = float((conf.get("behavior") or {}).get("alert_watchdog_seconds", 600) or 600)
+        end = time.monotonic() + (duration if duration is not None else watchdog)
+        method = (conf.get("behavior") or {}).get("blink_method", "alert").lower()
+        if method == "alert":
+            alert_mode = (pattern.get("alert_mode") or "lselect").lower()
+            if alert_mode in ("lselect", "breathe"):
+                self.bridge.set_state({"alert": "lselect"}, lids, gid)
+                complete = self._wait(cancel, max(0, end - time.monotonic()))
+            elif alert_mode == "select":
+                gap = max(0.1, float(pattern.get("select_gap", 0.7)))
+                complete = False
+                while not cancel.is_set() and not self.stop_evt.is_set():
+                    remaining = end - time.monotonic()
+                    if remaining <= 0:
+                        complete = True
+                        break
+                    self.bridge.set_state({"alert": "select"}, lids, gid)
+                    if cancel.wait(min(gap, remaining)):
+                        break
+                if not cancel.is_set() and not self.stop_evt.is_set() and time.monotonic() >= end:
+                    complete = True
+            else:
+                raise ValueError(f"Alerte Hue inconnue : {alert_mode}")
+            if not cancel.is_set():
+                self.bridge.stop_alert(lids, gid)
+                if complete:
+                    self._restore(conf)
+                    if self.on_state:
+                        self.on_state(None)
+            return
+
+        on_time = max(0.1, float(pattern.get("on", 0.5)))
+        off_time = max(0.1, float(pattern.get("off", 0.5)))
+        high = min(int(conf.get("bri", 254)), int(pattern.get("bri_override", 254)))
+        low = min(high, 25)
+        phase_on = True
+        while not cancel.is_set() and not self.stop_evt.is_set() and time.monotonic() < end:
+            wait = on_time if phase_on else off_time
+            if cancel.wait(min(wait, max(0, end - time.monotonic()))):
+                break
+            if time.monotonic() >= end:
+                break
+            phase_on = not phase_on
+            if method == "onoff":
+                if phase_on:
+                    self._apply(pattern, conf)
+                else:
+                    self.bridge.set_state({"on": False, "transitiontime": self._tt(pattern, conf, "off_transition_tenths")}, lids, gid)
+            elif method == "bri":
+                self.bridge.set_state({"on": True, "bri": high if phase_on else low,
+                                       "transitiontime": self._tt(pattern, conf, "transition_tenths")}, lids, gid)
+            else:
+                raise ValueError(f"Méthode de clignotement inconnue : {method}")
+        if not cancel.is_set() and not self.stop_evt.is_set():
+            self._restore(conf)
+            if self.on_state:
+                self.on_state(None)
 
     def _run(self):
-        while self.running.is_set() and not self.stop_evt.is_set():
-            try: cmd, val = self.cmd.get(timeout=0.05)
-            except Empty: continue
-            if cmd == "stop": break
-            if cmd != "play": continue
-
-            name = str(val)
-            p = self.conf["patterns"].get(name)
-            if not p:
-                print(f"[WARN] Pattern '{name}' inconnu."); continue
-
-            self.cancel_event.clear()
-            mode = p["mode"]
-            lids, gid = self._targets()
-
-            # ================= SOLID =================
-            if mode == "solid":
-                hold = max(0.0, p.get("hold", 0.0))
-                end = time.monotonic() + hold
-                while time.monotonic() < end:
-                    if self.cancel_event.is_set() or self.stop_evt.is_set(): break
-                    time.sleep(0.01)
-
-                if not self.cancel_event.is_set():
-                    # fin naturelle du SOLID
-                    if p.get("then_off", False):
-                        off_tt = self._tt(p, "off_transition_tenths", "off_transition_tenths")
-                        self.bridge.set_state({"on": False, "transitiontime": int(max(0, off_tt))}, lids, gid)
-                        # petite pause puis restore baseline
-                        bconf = self.conf.get("baseline", {}) or {}
-                        delay = float(bconf.get("delay_after_off_s", 0.05) or 0.0)
-                        waited = 0.0
-                        step = 0.01
-                        while waited < delay and not self.cancel_event.is_set() and not self.stop_evt.is_set():
-                            time.sleep(step); waited += step
-                        if not self.cancel_event.is_set():
-                            self._restore_baseline_if_enabled()
-                    # sinon (then_off=false), on ne restaure pas ici
+        while True:
+            try:
+                kind, name, conf, cancel = self.cmd.get(timeout=0.1)
+            except Empty:
                 continue
-
-            # ================= BLINK =================
-            if mode == "blink":
-                method = (self.conf.get("behavior", {}).get("blink_method","alert")).lower()
-                if method == "alert":
-                    alert_mode = (p.get("alert_mode") or "lselect").lower()
-                    if alert_mode in ("breathe", "lselect"):
-                        self.bridge.set_state({"alert": "lselect"}, lids, gid)
-                        duration = float(p.get("duration", 0) or 0)
-                        watch = float(self.conf.get("behavior", {}).get("alert_watchdog_seconds", 0) or 0)
-                        start = time.monotonic()
-                        if duration > 0:
-                            end = start + duration
-                            while not self.cancel_event.is_set() and not self.stop_evt.is_set() and time.monotonic() < end:
-                                time.sleep(0.02)
-                            self.bridge.stop_alert(lids, gid)
-                            if not self.cancel_event.is_set():
-                                self._restore_baseline_if_enabled()
-                        else:
-                            while not self.cancel_event.is_set() and not self.stop_evt.is_set():
-                                if watch and (time.monotonic() - start) > watch:
-                                    self.bridge.stop_alert(lids, gid)
-                                    break
-                                time.sleep(0.05)
-                        continue
-
-                    elif alert_mode == "select":
-                        repeats = int(p.get("select_repeats", 1))
-                        gap = float(p.get("select_gap", 0.6))
-                        repeats = max(1, repeats)
-                        completed = 0
-                        for _ in range(repeats):
-                            if self.cancel_event.is_set() or self.stop_evt.is_set(): break
-                            self.bridge.set_state({"alert": "select"}, lids, gid)
-                            completed += 1
-                            if self.cancel_event.wait(gap) or self.stop_evt.is_set(): break
-                        if not self.cancel_event.is_set() and completed == repeats:
-                            self._restore_baseline_if_enabled()
-                        continue
-
-                    else:
-                        print(f"[WARN] alert_mode '{alert_mode}' inconnu, fallback lselect.")
-                        self.bridge.set_state({"alert": "lselect"}, lids, gid)
-                        while not self.cancel_event.is_set() and not self.stop_evt.is_set():
-                            time.sleep(0.05)
-                        continue
-
-                # Fallbacks manuels (onoff/bri) — inchangés sauf qu’on cible (lids,gid)
-                elif method == "onoff":
-                    on_t  = float(p.get("on", 0.5)); off_t = float(p.get("off", 0.5))
-                    start = time.monotonic(); next_sw = start + on_t; phase_on = True
-                    while not self.cancel_event.is_set() and not self.stop_evt.is_set():
-                        now = time.monotonic()
-                        if now >= next_sw:
-                            phase_on = not phase_on
-                            if phase_on:
-                                bri = int(p.get("bri_override", self.conf["bri"]))
-                                tt = self._tt(p, "transition_tenths", "transition_tenths")
-                                self._apply_from_pattern(p, bri, tt)
-                                next_sw = now + on_t
-                            else:
-                                off_tt = self._tt(p, "off_transition_tenths", "off_transition_tenths")
-                                self.bridge.set_state({"on": False, "transitiontime": int(max(0, off_tt))}, lids, gid)
-                                next_sw = now + off_t
-                    continue
-
-                elif method == "bri":
-                    on_t  = float(p.get("on", 0.5)); off_t = float(p.get("off", 0.5))
-                    bri_hi = int(p.get("bri_override", self.conf["bri"])); bri_lo = 25
-                    tt = self._tt(p, "transition_tenths", "transition_tenths")
-                    if "ct" in p:
-                        self.bridge.set_state({"on": True, "ct": int(p["ct"]), "bri": bri_hi, "transitiontime": int(max(0, tt))}, lids, gid)
-                    else:
-                        self.bridge.set_state({"on": True, "bri": bri_hi, "transitiontime": int(max(0, tt))}, lids, gid)
-                    phase_on = True; next_sw = time.monotonic() + on_t
-                    while not self.cancel_event.is_set() and not self.stop_evt.is_set():
-                        now = time.monotonic()
-                        if now >= next_sw:
-                            phase_on = not phase_on
-                            self.bridge.set_state({"on": True, "bri": (bri_hi if phase_on else bri_lo), "transitiontime": int(max(0, tt))}, lids, gid)
-                            next_sw = now + (on_t if phase_on else off_t)
-                    continue
-
+            if kind == "stop":
+                try:
+                    lids, gid = self._targets()
+                    self.bridge.stop_alert(lids, gid)
+                except Exception:
+                    pass
+                return
+            if cancel.is_set() or not self.running.is_set():
+                continue
+            try:
+                if kind == "clear":
+                    lids, gid = self._targets()
+                    self.bridge.stop_alert(lids, gid)
+                    if not cancel.is_set():
+                        self._restore(conf)
+                        if self.on_state:
+                            self.on_state(None)
                 else:
-                    print(f"[WARN] blink_method '{method}' inconnu, rien à faire.")
-                    continue
-
-            print(f"[WARN] Mode '{mode}' non supporté.")
+                    self._play(name, conf, cancel)
+            except Exception as exc:
+                if self.on_error:
+                    self.on_error(exc)
+                else:
+                    print(f"[HUE] {exc}")

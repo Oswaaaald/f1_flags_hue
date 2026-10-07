@@ -11,6 +11,7 @@ class HueBridge:
     def __init__(self, ip: str, username: str, timeout=0.6):
         self.ip = ip; self.base = f"http://{ip}/api"; self.username = username; self.timeout = timeout
         self.session = requests.Session()
+        self.session.trust_env = False  # Ne jamais envoyer la clé Hue à un proxy HTTP ambiant.
         self.session.mount("http://",
             requests.adapters.HTTPAdapter(pool_connections=8, pool_maxsize=16, max_retries=1))
 
@@ -44,16 +45,24 @@ class HueBridge:
             return [f"{self.base}/{self.username}/groups/{group_id}/action"]
         if light_ids:
             return [f"{self.base}/{self.username}/lights/{lid}/state" for lid in light_ids]
-        return [f"{self.base}/{self.username}/groups/0/action"]
+        raise HueBridgeConnectionError("Aucune lampe Hue sélectionnée.")
 
     def set_state(self, data: dict, light_ids=None, group_id=None):
         for url in self._targets(light_ids, group_id):
-            self._request("PUT", url, json=data)
+            self._check_write(self._request("PUT", url, json=data))
 
     # Par lampe
     def set_light_state(self, light_id: int, data: dict):
         url = f"{self.base}/{self.username}/lights/{int(light_id)}/state"
-        self._request("PUT", url, json=data)
+        self._check_write(self._request("PUT", url, json=data))
+
+    def _check_write(self, response):
+        data = response.json()
+        if isinstance(data, list):
+            for item in data:
+                if isinstance(item, dict) and "error" in item:
+                    raise HueBridgeConnectionError(f"Réponse du pont Hue : {item['error'].get('description', 'erreur API')}")
+        return data
 
     def stop_alert(self, light_ids=None, group_id=None):
         self.set_state({"alert":"none"}, light_ids, group_id)
@@ -70,7 +79,12 @@ class HueBridge:
 
     def groups(self) -> dict:
         url = f"{self.base}/{self.username}/groups"
-        r = self._request("GET", url); return r.json()
+        data = self._request("GET", url).json()
+        if isinstance(data, list) and data and "error" in data[0]:
+            raise HueBridgeConnectionError(f"Réponse du pont Hue : {data[0]['error'].get('description', 'erreur API')}")
+        if not isinstance(data, dict):
+            raise HueBridgeConnectionError("Réponse inattendue du pont Hue lors de la lecture des zones.")
+        return data
 
     # --------- NEW: groupe "virtuel" pour synchroniser des light_ids ---------
 

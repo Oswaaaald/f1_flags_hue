@@ -35,7 +35,11 @@ make run-live
 
 Si l'adresse IP du pont a changé, mettez `bridge_ip` à jour dans `config.yml`. Pour tester les lampes indépendamment de la F1 : `make quick GAP=5`.
 
-Pour utiliser l'interface web du repo, lancez `make web` et ouvrez [http://localhost:8080](http://localhost:8080). Le fichier `web/static/index.html` dépend du serveur pour ses appels `/api/...`. Par défaut, l'interface n'écoute que sur cet ordinateur ; une exposition au réseau local exige de définir explicitement `F1_HUE_WEB_HOST`.
+Pour utiliser l'interface web du repo, lancez `make web` et ouvrez [http://localhost:8080](http://localhost:8080). Le fichier `web/static/index.html` dépend du serveur pour ses appels `/api/...`. Par défaut, l'interface n'écoute que sur cet ordinateur. `F1_HUE_WEB_HOST=0.0.0.0` l'expose au réseau local sans authentification : toute personne pouvant joindre le port 8080 pourrait commander les lampes et modifier les réglages. Gardez l'accès local au Mac tant qu'une authentification n'est pas en place. Les adresses IP et `localhost` sont acceptés comme noms d'hôte ; si vous utilisez un nom DNS privé, ajoutez-le explicitement à `F1_HUE_WEB_ALLOWED_HOSTS` (liste séparée par des virgules).
+
+L'interface comporte cinq sections : **Direct** (état, calibration et journal), **Hue** (liaison et lampes), **Tests** (aperçu, séquence et replay), **Drapeaux** (activation et durée de chaque effet) et **Préférences** (luminosité, transitions, restauration et arrêt au damier). Elle fonctionne sans Node ni compilation. Le thème clair est proposé par défaut, avec les choix sombre et automatique.
+
+Les réglages de drapeaux, de durée et de luminosité enregistrés pendant le direct s'appliquent au **prochain événement joué**, après l'offset TV. Ils ne changent pas l'effet déjà actif. Une durée fixe se termine par la restauration de l'état des lampes ; « jusqu'au prochain événement » garde l'effet jusqu'au changement suivant. Un événement désactivé met fin à l'effet précédent sans afficher sa propre couleur. Les clignotements continus restent soumis à la limite de sécurité des Préférences. La sélection des lampes ne peut être modifiée qu'à l'arrêt.
 
 Sur macOS, si l'adresse du pont s'ouvre dans le navigateur mais que le programme indique « No route to host », lancez `make web` depuis l'application **Terminal**. Si vous utilisez le terminal intégré de VS Code, autorisez **Visual Studio Code** dans Réglages Système → Confidentialité et sécurité → Réseau local, puis relancez le serveur. L'accès au réseau local est accordé séparément à chaque application.
 
@@ -73,6 +77,6 @@ rules:
     BLUE: null   # ignorer ce drapeau
 ```
 
-Les noms à droite doivent exister dans `patterns`. Le nouveau réglage prend effet au prochain démarrage du mode Live. Voir [l'architecture](docs/architecture.md) pour les modules et les limites du flux.
+Les noms à droite doivent exister dans `patterns`. L'interface enregistre les activations dans `flags.enabled` et les durées dans `patterns.<DRAPEAU>.duration_seconds` (`null` signifie « jusqu'au prochain événement »). Ces réglages ont priorité sur l'ancien `ignore_blue` ; le bleu reste désactivé par défaut. Les changements prennent effet au prochain drapeau joué, sans relancer le mode Live. Voir [l'architecture](docs/architecture.md) pour les modules et les limites du flux.
 
 Sources : [client live timing FastF1](https://github.com/theOehrly/Fast-F1/blob/main/fastf1/livetiming/client.py), [API locale Hue](https://developers.meethue.com/support/).

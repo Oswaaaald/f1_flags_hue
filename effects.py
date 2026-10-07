@@ -7,6 +7,7 @@ from typing import Protocol
 
 from live_events import LiveEvent
 from sync_events import delayed_events
+from settings import flag_enabled
 
 
 class EffectOutput(Protocol):
@@ -15,6 +16,7 @@ class EffectOutput(Protocol):
 
 class EffectRules:
     def __init__(self, conf: dict):
+        self.conf = conf
         self.patterns = conf.get("patterns") or {}
         self.overrides = (conf.get("rules") or {}).get("flag_patterns") or {}
         for flag, pattern in self.overrides.items():
@@ -24,23 +26,40 @@ class EffectRules:
     def pattern_for(self, event: LiveEvent) -> str | None:
         if event.kind != "flag":
             return None
+        if not flag_enabled(self.conf, str(event.value)):
+            return None
         pattern = self.overrides.get(str(event.value), event.value)
         return pattern if pattern in self.patterns else None
 
 
 def play_effects(events, output: EffectOutput, conf: dict, stop_evt: threading.Event,
-                 offset_seconds=0, on_play=None):
-    rules = EffectRules(conf)
+                 offset_seconds=0, on_play=None, conf_provider=None, on_skip=None):
     for event in delayed_events(events, offset_seconds, stop_evt):
         if stop_evt.is_set():
             break
+        if event.kind != "flag":
+            continue
+        current = conf_provider() if conf_provider else conf
+        rules = EffectRules(current)
         pattern = rules.pattern_for(event)
         if pattern is None:
+            if hasattr(output, "clear"):
+                if conf_provider:
+                    output.clear(effect_conf=current)
+                else:
+                    output.clear()
+            if on_skip:
+                on_skip(event)
+            if event.value == "CHEQUERED" and current.get("flags", {}).get("exit_on_chequered", False):
+                break
             continue
-        output.play(pattern)
+        if conf_provider:
+            output.play(pattern, effect_conf=current)
+        else:
+            output.play(pattern)
         if on_play is not None:
             on_play(event, pattern)
-        if event.value == "CHEQUERED" and conf.get("flags", {}).get("exit_on_chequered", False):
+        if event.value == "CHEQUERED" and current.get("flags", {}).get("exit_on_chequered", False):
             break
 
 

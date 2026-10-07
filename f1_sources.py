@@ -71,7 +71,7 @@ class F1SourceFormula1Live:
                     flag = "YELLOW"
                 if flag in ("GREEN", "YELLOW", "RED", "CHEQUERED"):
                     self._emit(flag, source_utc=row.get("Utc"))
-                elif flag == "BLUE" and not self.flags_conf.get("ignore_blue", True):
+                elif flag == "BLUE":
                     self._emit("BLUE", source_utc=row.get("Utc"))
             elif category == "safetycar":
                 if "VSC" in msg or "VIRTUAL SAFETY CAR" in msg:
@@ -136,9 +136,11 @@ class F1SourceFormula1Live:
             self._publish("clock", details=dict(self._clock))
         elif topic == "LapCount" and isinstance(data, dict):
             self._update_lap_count(data, emit=True)
-        elif topic == "TrackStatus" and self._session_started and isinstance(data, dict):
-            self._emit(self.TRACK_FLAGS.get(str(data.get("Status"))))
-        elif topic == "RaceControlMessages" and self._session_status in ("Started", "Finished"):
+        elif topic == "TrackStatus" and isinstance(data, dict):
+            status = str(data.get("Status"))
+            if self._session_started or (self._session_status == "Aborted" and status == "5"):
+                self._emit(self.TRACK_FLAGS.get(status))
+        elif topic == "RaceControlMessages" and self._session_status in ("Started", "Finished", "Aborted"):
             self._race_control(data, only_chequered=self._session_status == "Finished")
 
     def _update_lap_count(self, data: dict, emit: bool):

@@ -80,6 +80,21 @@ const tvClockInput = document.getElementById("tvClockInput");
 const clockCompare = document.getElementById("clockCompare");
 const clockApply = document.getElementById("clockApply");
 const clockResult = document.getElementById("clockResult");
+const activeEffect = document.getElementById("activeEffect");
+const previewStart = document.getElementById("previewStart");
+const toast = document.createElement("div");
+toast.className = "toast";
+toast.setAttribute("role", "status");
+toast.setAttribute("aria-live", "polite");
+document.body.appendChild(toast);
+let toastTimer;
+function showToast(message, error=false){
+  toast.textContent = message;
+  toast.classList.toggle("error", error);
+  toast.classList.add("visible");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(()=>toast.classList.remove("visible"), 5000);
+}
 
 // --- state ---
 let INVENTORY = { groups: {}, lights: {} };
@@ -99,6 +114,7 @@ function addLog(msg, cls){
   div.textContent = msg;
   logEl.appendChild(div);
   logEl.scrollTop = logEl.scrollHeight;
+  if (cls === "err") showToast(msg, true);
 }
 function fmtTime(ts){
   if (!ts) return "—";
@@ -163,6 +179,7 @@ setInterval(refreshFlagHistory, 5000);
 function updateFeedStatus(feed){
   if (!feed) return;
   stFeed.textContent = feed.connected ? "connecté" : (feed.last_error ? `déconnecté (${feed.last_error})` : "connexion…");
+  document.getElementById("feedDot").className = `status-dot ${feed.connected ? "online" : (feed.last_error ? "error" : "")}`;
   stSession.textContent = [feed.session_name, feed.session_status].filter(Boolean).join(" — ") || "—";
   stLap.textContent = feed.current_lap == null ? "—" : `${feed.current_lap}/${feed.total_laps || "?"}`;
   stFeedTime.textContent = fmtTime(feed.last_data_at);
@@ -172,14 +189,14 @@ function setBadgeOffset(val){
   stOff.textContent = offsetBadge.textContent;
 }
 function updateSelPreview(sel){
-  if (sel.group_id !== null && sel.group_id !== undefined)
-    selPreview.textContent = `Sélection: group_id=${sel.group_id}`;
-  else if (sel.group_ids && sel.group_ids.length)
-    selPreview.textContent = `Sélection: group_ids=[${sel.group_ids.join(", ")}]`;
-  else if (sel.light_ids && sel.light_ids.length)
-    selPreview.textContent = `Sélection: light_ids=[${sel.light_ids.join(", ")}]`;
-  else
-    selPreview.textContent = `Sélection: (aucune)`;
+  const directTargets = document.getElementById("directTargets");
+  const selectedGroups = (sel.group_ids || []).map(id=>INVENTORY.groups?.[String(id)]?.name || `Zone ${id}`);
+  const selectedLights = (sel.light_ids || []).map(id=>INVENTORY.lights?.[String(id)]?.name || `Lampe ${id}`);
+  directTargets.textContent = sel.group_id === 0 ? "Toutes les lampes" :
+    sel.group_id != null ? (INVENTORY.groups?.[String(sel.group_id)]?.name || `Zone ${sel.group_id}`) :
+    selectedGroups.length ? selectedGroups.join(", ") :
+    selectedLights.length ? selectedLights.join(", ") : "Aucune sélection";
+  selPreview.textContent = `Sélection : ${directTargets.textContent}`;
 }
 function saveMsgOk(){
   saveStatus.textContent = "✓ Enregistré";
@@ -255,8 +272,9 @@ function showLinkedBridgeUI(show){
 
 // --- bridge link status ---
 async function setBridgeStatus(connected){
+  document.getElementById("bridgeDot").className = `status-dot ${connected ? "online" : "error"}`;
   if (connected){
-    bridgeStatus.textContent = "Statut : connecté !";
+    bridgeStatus.textContent = "Connecté";
     bridgeStatus.classList.remove("not-connected");
     bridgeStatus.classList.add("connected");
     if (bridgeHint) bridgeHint.style.display = "none";
@@ -267,7 +285,7 @@ async function setBridgeStatus(connected){
     renderLinkedBridgeCard(meta || { ip });
     showLinkedBridgeUI(true);
   }else{
-    bridgeStatus.textContent = "Statut : non connecté";
+    bridgeStatus.textContent = "Non connecté";
     bridgeStatus.classList.remove("connected");
     bridgeStatus.classList.add("not-connected");
     if (bridgeHint) bridgeHint.style.display = "";
@@ -289,16 +307,18 @@ function updateRunUI({running, mode, pendingStart=false, pendingStop=false, gap=
     startLive.disabled = true;
     startTest.disabled = true;
     replayStart.disabled = true;
+    previewStart.disabled = true;
     stopBtn.disabled = true;
-    setRunStatus("Statut: démarrage…", "pending");
+    setRunStatus("Démarrage…", "pending");
     return;
   }
   if (pendingStop){
     startLive.disabled = true;
     startTest.disabled = true;
     replayStart.disabled = true;
+    previewStart.disabled = true;
     stopBtn.disabled = true;
-    setRunStatus("Statut: arrêt en cours…", "stopping");
+    setRunStatus("Arrêt…", "stopping");
     return;
   }
 
@@ -306,25 +326,32 @@ function updateRunUI({running, mode, pendingStart=false, pendingStop=false, gap=
     startLive.disabled = true;
     startTest.disabled = true;
     replayStart.disabled = true;
+    previewStart.disabled = true;
     stopBtn.disabled = false;
     if (mode === "live"){
-      setRunStatus("Statut: live en cours", "live");
+      setRunStatus("Direct en cours", "live");
     } else if (mode === "test"){
-      setRunStatus(`Statut: test en cours${gap ? " (gap "+gap+"s)" : ""}`, "test");
+      setRunStatus(`Test en cours${gap ? " ("+gap+" s)" : ""}`, "test");
     } else {
-      setRunStatus("Statut: en cours", "live");
+      setRunStatus(mode === "preview" ? "Aperçu en cours" : mode === "replay" ? "Replay en cours" : "Démarrage…", "live");
     }
   }else{
     startLive.disabled = false;
     startTest.disabled = false;
     replayStart.disabled = !replaySession.value;
+    previewStart.disabled = false;
     stopBtn.disabled = true;
-    setRunStatus("Statut: idle", "idle");
+    setRunStatus("À l’arrêt", "idle");
   }
 }
 
 // --- inventory load ---
 async function loadInventory(){
+  if (!confCache?.username || !confCache?.bridge_ip){
+    INVENTORY = {groups:{}, lights:{}};
+    await setBridgeStatus(false);
+    return false;
+  }
   try{
     const gr = await fetch("/api/hue/groups");
     const groups = await gr.json();
@@ -335,6 +362,7 @@ async function loadInventory(){
     }
     INVENTORY.groups = groups || {};
     INVENTORY.lights = lights || {};
+    updateSelPreview(selection);
     if (confCache && confCache.bridge_ip && confCache.username) await setBridgeStatus(true);
     return true;
   }catch(e){
@@ -358,6 +386,8 @@ function renderBridges(){
   bridgesCache.forEach(b=>{
     const card = document.createElement("div");
     card.className = "bridge-card clickable";
+    card.setAttribute("role", "button");
+    card.tabIndex = 0;
     const title = document.createElement("div");
     title.className = "title";
     title.textContent = b.name || `Hue Bridge ${b.ip}`;
@@ -369,6 +399,9 @@ function renderBridges(){
     msg.textContent = "Cliquer la carte puis appuyer sur le bouton du bridge.";
 
     card.onclick = ()=> startLinkFlow(b.ip, msg, card);
+    card.onkeydown = event=>{
+      if (event.key === "Enter" || event.key === " ") { event.preventDefault(); card.click(); }
+    };
 
     card.appendChild(title);
     card.appendChild(meta);
@@ -386,8 +419,21 @@ async function discoverBridges(){
   }catch(e){
     bridgesCache = [];
     renderBridges();
+    document.getElementById("bridgeFeedback").textContent = "Recherche réseau indisponible. Vous pouvez saisir l’adresse IP locale du pont ci-dessous.";
   }
 }
+
+document.getElementById("manualBridgeLink").addEventListener("click", async ()=>{
+  const ip = document.getElementById("manualBridgeIp").value.trim();
+  const feedback = document.getElementById("bridgeFeedback");
+  if (!ip){
+    feedback.textContent = "Saisissez l’adresse IP locale du pont Hue.";
+    feedback.className = "bridge-feedback error";
+    return;
+  }
+  feedback.className = "bridge-feedback";
+  await startLinkFlow(ip, feedback, document.getElementById("manualBridgePanel"));
+});
 
 // --- auto link flow with gentle retry (anti rate-limit) ---
 async function tryLinkOnce(ip){
@@ -438,6 +484,7 @@ async function startLinkFlow(ip, msgEl, cardEl){
         break;
       }else{
         lastErr = (j && j.error) || "Erreur de liaison";
+        if (!/link button|bouton|press/i.test(lastErr)) break;
       }
     }catch(e){
       lastErr = String(e);
@@ -478,6 +525,9 @@ function renderSingle(filter = "") {
     const card = document.createElement("div");
     const isSelected = (current !== null && current !== undefined && Number(current) === r.id);
     card.className = "card-item" + (isSelected ? " selected" : "");
+    card.setAttribute("role", "button");
+    card.setAttribute("aria-pressed", String(isSelected));
+    card.tabIndex = 0;
 
     const title = document.createElement("div");
     title.className = "title";
@@ -497,6 +547,10 @@ function renderSingle(filter = "") {
       updateSelPreview(selection);
       document.querySelectorAll("#gridSingle .card-item").forEach(el => el.classList.remove("selected"));
       card.classList.add("selected");
+      card.setAttribute("aria-pressed", "true");
+    };
+    card.onkeydown = event=>{
+      if (event.key === "Enter" || event.key === " ") { event.preventDefault(); card.click(); }
     };
 
     gridSingle.appendChild(card);
@@ -520,6 +574,9 @@ function renderMulti(filter=""){
   rows.forEach(r=>{
     const card = document.createElement("div");
     card.className = "card-item" + (selected.has(r.id)?" selected":"");
+    card.setAttribute("role", "button");
+    card.setAttribute("aria-pressed", String(selected.has(r.id)));
+    card.tabIndex = 0;
     const title = document.createElement("div");
     title.className = "title";
     title.textContent = `${r.name}`;
@@ -535,6 +592,10 @@ function renderMulti(filter=""){
       saveMsgClear();
       updateSelPreview(selection);
       card.classList.toggle("selected");
+      card.setAttribute("aria-pressed", String(selected.has(r.id)));
+    };
+    card.onkeydown = event=>{
+      if (event.key === "Enter" || event.key === " ") { event.preventDefault(); card.click(); }
     };
     gridMulti.appendChild(card);
   });
@@ -559,6 +620,9 @@ function renderLights(filter="", onlyOnChecked=false){
   rows.forEach(r=>{
     const card = document.createElement("div");
     card.className = "card-item" + (selected.has(r.id)?" selected":"");
+    card.setAttribute("role", "button");
+    card.setAttribute("aria-pressed", String(selected.has(r.id)));
+    card.tabIndex = 0;
     const title = document.createElement("div");
     title.className = "title";
     title.textContent = `${r.name}`;
@@ -574,6 +638,10 @@ function renderLights(filter="", onlyOnChecked=false){
       saveMsgClear();
       updateSelPreview(selection);
       card.classList.toggle("selected");
+      card.setAttribute("aria-pressed", String(selected.has(r.id)));
+    };
+    card.onkeydown = event=>{
+      if (event.key === "Enter" || event.key === " ") { event.preventDefault(); card.click(); }
     };
     gridLights.appendChild(card);
   });
@@ -629,6 +697,7 @@ function setMode(mode){
 
     const st = await (await fetch("/api/status")).json();
     updateRunUI({running: st.running, mode: st.mode, gap: st.gap});
+    setActiveEffect(st.active_pattern);
     stMode.textContent    = st.mode || (st.running ? "running" : "idle");
     stFlag.textContent    = st.last_flag || "—";
     stStarted.textContent = st.started_at ? fmtTime(st.started_at) : "—";
@@ -731,11 +800,12 @@ async function onUnlinkBridge(){
     saveSelBtn.disabled = true;
 
     updateRunUI({running:false});
+    if (confCache){ confCache.bridge_ip = null; confCache.username = null; }
     stMode.textContent = "idle";
     stFlag.textContent = "—";
     stStarted.textContent = "—";
     stBase.textContent = "—";
-    setBadgeOffset(0);
+    setBadgeOffset(getCurrentOffset());
 
     await discoverBridges();
     addLog("Bridge délié. Choisissez un bridge dans la liste pour relier.", "");
@@ -861,12 +931,17 @@ stopBtn.onclick = async ()=>{
   if (stopping || !isRunning) return;
   updateRunUI({running:true, pendingStop:true});
   try{
-    await fetch("/api/stop", {method:"POST"});
-    setTimeout(()=>{
-      if (stopping) updateRunUI({running:false});
-    }, 2000);
+    const response = await fetch("/api/stop", {method:"POST"});
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || "Arrêt impossible");
+    if (data.actually_stopped) updateRunUI({running:false});
+    else {
+      stopping = false;
+      showToast("Arrêt demandé ; les lampes seront restaurées dès que le pont répond.");
+      refreshFeedStatus();
+    }
   }catch(e){
-    addLog("Erreur réseau pendant l’arrêt", "err");
+    addLog(`Erreur pendant l’arrêt : ${e.message || e}`, "err");
     updateRunUI({running:true});
   }
 };
@@ -1121,6 +1196,13 @@ async function refreshFeedStatus(){
   try{
     const status = await (await fetch("/api/status")).json();
     updateFeedStatus(status.feed);
+    if (!starting && !stopping){
+      updateRunUI({running:status.running,mode:status.mode,gap:status.gap});
+      setActiveEffect(status.active_pattern);
+      stMode.textContent = status.mode || "à l’arrêt";
+      stFlag.textContent = status.last_flag || "—";
+      stStarted.textContent = status.started_at ? fmtTime(status.started_at) : "—";
+    }
   }catch(_){
     stFeed.textContent = "serveur inaccessible";
   }
@@ -1133,6 +1215,7 @@ try{
     try{
       const st = await (await fetch("/api/status")).json();
       updateRunUI({running: st.running, mode: st.mode, gap: st.gap});
+      setActiveEffect(st.active_pattern);
       stMode.textContent    = st.mode || (st.running ? "running" : "idle");
       stFlag.textContent    = st.last_flag || "—";
       stStarted.textContent = st.started_at ? fmtTime(st.started_at) : "—";
@@ -1150,6 +1233,11 @@ try{
     } else if (data.type === "flag"){
       stFlag.textContent = data.flag;
       addLog(`FLAG: ${data.flag}`, "flag");
+    } else if (data.type === "flag_skipped"){
+      stFlag.textContent = data.flag;
+      addLog(`${data.flag} masqué : état Hue restauré`, "");
+    } else if (data.type === "effect"){
+      setActiveEffect(data.pattern);
     } else if (data.type === "baseline"){
       stBase.textContent = `captured ${data.captured}`;
       addLog(`Baseline capturée (${data.captured} lampes)`, "");
@@ -1162,12 +1250,13 @@ try{
       addLog(`Sync offset: ${data.offset_seconds}s`, "");
     } else if (data.type === "stopped"){
       updateRunUI({running:false});
+      setActiveEffect(null);
       stMode.textContent = "idle";
       addLog(`STOPPED`, "");
     } else if (data.type === "error"){
       addLog(`ERROR: ${data.message}`, "err");
-      updateRunUI({running:false});
-      stMode.textContent = "error";
+      starting = false;
+      refreshFeedStatus();
     } else if (data.type === "sync_group"){
       addLog(`LightGroup sync id=${data.group_id} (lampes=${data.size})`, "");
     } else if (data.type === "status"){
@@ -1175,8 +1264,233 @@ try{
       stMode.textContent    = data.mode || "idle";
       stFlag.textContent    = data.last_flag || "—";
       stStarted.textContent = data.started_at ? fmtTime(data.started_at) : "—";
+      setActiveEffect(data.active_pattern);
     }
   };
 }catch(e){
   addLog("SSE indisponible", "err");
 }
+
+function setActiveEffect(pattern){
+  activeEffect.textContent = pattern ? (FLAG_LABELS[pattern] || pattern) : "Aucun effet actif";
+  activeEffect.classList.toggle("has-effect", !!pattern);
+  activeEffect.style.setProperty("--active-color", pattern ? (FLAG_COLORS[pattern] || "#999") : "transparent");
+  const pill = document.getElementById("liveStatePill");
+  pill.textContent = pattern ? "Effet actif" : "En attente";
+  pill.classList.toggle("active", !!pattern);
+  document.getElementById("liveHelper").textContent = pattern
+    ? "L’effet prendra fin selon sa durée ou au prochain événement F1."
+    : "Les lampes conservent leur état normal entre les effets.";
+}
+
+// Navigation locale : les URLs restent rechargeables grâce aux routes Flask.
+const PAGES = new Set(["direct", "hue", "tests", "flags", "preferences"]);
+function showPage(page){
+  const selected = PAGES.has(page) ? page : "direct";
+  document.querySelectorAll("[data-page-panel]").forEach(panel=>{
+    panel.hidden = panel.dataset.pagePanel !== selected;
+  });
+  document.querySelectorAll(".main-nav [data-page]").forEach(link=>{
+    const active = link.dataset.page === selected;
+    link.classList.toggle("active", active);
+    if (active) link.setAttribute("aria-current", "page");
+    else link.removeAttribute("aria-current");
+  });
+  window.scrollTo({top:0, behavior:"auto"});
+}
+document.querySelectorAll("a[data-page]").forEach(link=>link.addEventListener("click", event=>{
+  event.preventDefault();
+  history.pushState({}, "", link.getAttribute("href"));
+  showPage(link.dataset.page);
+}));
+window.addEventListener("popstate", ()=>showPage(location.pathname.slice(1)));
+showPage(location.pathname.slice(1));
+
+function showDirectTab(name){
+  document.querySelectorAll("[data-direct-tab]").forEach(tab=>{
+    const active = tab.dataset.directTab === name;
+    tab.classList.toggle("active", active);
+    tab.setAttribute("aria-selected", String(active));
+    tab.tabIndex = active ? 0 : -1;
+  });
+  document.querySelectorAll("[data-direct-panel]").forEach(panel=>{
+    panel.hidden = panel.dataset.directPanel !== name;
+  });
+}
+document.querySelectorAll("[data-direct-tab]").forEach(tab=>tab.addEventListener("click", ()=>showDirectTab(tab.dataset.directTab)));
+showDirectTab("live");
+
+const themeChoice = document.getElementById("themeChoice");
+const storedTheme = localStorage.getItem("f1-hue-theme");
+themeChoice.value = ["light","dark","system"].includes(storedTheme) ? storedTheme : "light";
+document.documentElement.dataset.theme = themeChoice.value;
+themeChoice.addEventListener("change", ()=>{
+  document.documentElement.dataset.theme = themeChoice.value;
+  localStorage.setItem("f1-hue-theme", themeChoice.value);
+});
+
+const FLAG_LABELS = {GREEN:"Drapeau vert",YELLOW:"Drapeau jaune",RED:"Drapeau rouge",SC:"Safety Car",SC_ENDING:"Fin Safety Car",VSC:"Virtual Safety Car",VSC_ENDING:"Fin VSC",BLUE:"Drapeau bleu",CHEQUERED:"Drapeau à damier"};
+const FLAG_DESCRIPTIONS = {GREEN:"Piste dégagée",YELLOW:"Danger sur la piste",RED:"Séance interrompue",SC:"Voiture de sécurité",SC_ENDING:"Retour prochainement à la course",VSC:"Voiture de sécurité virtuelle",VSC_ENDING:"Fin de la VSC",BLUE:"Laisser passer",CHEQUERED:"Fin de séance"};
+const FLAG_COLORS = {GREEN:"#58b778",YELLOW:"#e5ba42",RED:"#d95c62",SC:"#e5ba42",SC_ENDING:"#e5ba42",VSC:"#e5ba42",VSC_ENDING:"#e5ba42",BLUE:"#5a9fdf",CHEQUERED:"conic-gradient(#fff 25%,#222 0 50%,#fff 0 75%,#222 0) 0 0 / 12px 12px"};
+let settingsCache = null;
+async function patchSettings(body){
+  const response = await fetch("/api/settings", {method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || "Enregistrement impossible");
+  settingsCache = data;
+  return data;
+}
+async function loadSettings(){
+  const response = await fetch("/api/settings", {cache:"no-store"});
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || "Réglages indisponibles");
+  settingsCache = data;
+  renderEffects();
+  renderPreferences();
+}
+function renderEffects(){
+  const grid = document.getElementById("effectsGrid");
+  grid.replaceChildren();
+  for (const [flag, effect] of Object.entries(settingsCache.effects)){
+    const card = document.createElement("article");
+    card.className = "effect-card";
+    const header = document.createElement("div");
+    header.className = "effect-card-header";
+    const swatch = document.createElement("span");
+    swatch.className = "effect-swatch";
+    swatch.style.background = FLAG_COLORS[flag] || "#999";
+    const titleWrap = document.createElement("div");
+    const title = document.createElement("h2");
+    title.textContent = FLAG_LABELS[flag] || flag;
+    const subtitle = document.createElement("small");
+    subtitle.textContent = FLAG_DESCRIPTIONS[flag] || "";
+    titleWrap.append(title,subtitle);
+    const enabled = document.createElement("input");
+    enabled.type = "checkbox";
+    enabled.className = "switch-input";
+    enabled.checked = effect.enabled;
+    enabled.setAttribute("aria-label", `Afficher ${FLAG_LABELS[flag] || flag}`);
+    header.append(swatch,titleWrap,enabled);
+    const label = document.createElement("label");
+    label.textContent = "Durée de l’effet (secondes)";
+    const durationRow = document.createElement("div");
+    durationRow.className = "effect-duration";
+    const mode = document.createElement("select");
+    mode.className = "input";
+    mode.innerHTML = '<option value="fixed">Durée fixe</option><option value="until">Jusqu’au prochain événement</option>';
+    mode.value = effect.duration_seconds == null ? "until" : "fixed";
+    mode.setAttribute("aria-label", `Mode de durée ${FLAG_LABELS[flag] || flag}`);
+    const seconds = document.createElement("input");
+    seconds.className = "input";
+    seconds.type = "number";
+    seconds.min = "0.1";
+    seconds.max = "3600";
+    seconds.step = "0.1";
+    seconds.value = effect.duration_seconds ?? "10";
+    seconds.disabled = mode.value === "until";
+    seconds.setAttribute("aria-label", `Durée en secondes ${FLAG_LABELS[flag] || flag}`);
+    durationRow.append(mode,seconds);
+    const feedback = document.createElement("div");
+    feedback.className = "bridge-feedback";
+    feedback.setAttribute("role", "status");
+    card.append(header,label,durationRow,feedback);
+    grid.appendChild(card);
+    async function save(change){
+      feedback.textContent = "Enregistrement…";
+      feedback.className = "bridge-feedback";
+      enabled.disabled = mode.disabled = seconds.disabled = true;
+      try{
+        const saved = await patchSettings({effects:{[flag]:change}});
+        const savedEffect = saved.effects[flag];
+        if ("duration_seconds" in change){
+          feedback.textContent = savedEffect.duration_seconds == null
+            ? "Durée « jusqu’au prochain événement » enregistrée."
+            : `Durée fixe de ${savedEffect.duration_seconds.toLocaleString("fr-BE")} s enregistrée.`;
+        }else{
+          feedback.textContent = savedEffect.enabled
+            ? "Drapeau activé et enregistré."
+            : "Drapeau désactivé et enregistré.";
+        }
+        feedback.className = "bridge-feedback success";
+      }catch(error){
+        feedback.textContent = error.message || String(error);
+        feedback.className = "bridge-feedback error";
+        const saved = settingsCache.effects[flag];
+        enabled.checked = saved.enabled;
+        mode.value = saved.duration_seconds == null ? "until" : "fixed";
+        seconds.value = saved.duration_seconds ?? "10";
+        showToast(feedback.textContent,true);
+      }finally{
+        enabled.disabled = mode.disabled = false;
+        seconds.disabled = mode.value === "until";
+      }
+    }
+    enabled.addEventListener("change", ()=>save({enabled:enabled.checked}));
+    mode.addEventListener("change", ()=>{
+      seconds.disabled = mode.value === "until";
+      const value = mode.value === "until" ? null : Number(seconds.value || 10);
+      save({duration_seconds:value});
+    });
+    seconds.addEventListener("change", ()=>{
+      const value = Number(seconds.value);
+      if (!Number.isFinite(value) || value < 0.1 || value > 3600){
+        feedback.textContent = "La durée doit être entre 0,1 et 3600 s.";
+        feedback.className = "bridge-feedback error";
+        return;
+      }
+      save({duration_seconds:value});
+    });
+  }
+}
+function renderPreferences(){
+  const p = settingsCache.preferences;
+  document.getElementById("prefBrightness").value = p.brightness;
+  document.getElementById("prefTransition").value = p.transition_seconds;
+  document.getElementById("prefWatchdog").value = p.alert_watchdog_seconds;
+  document.getElementById("prefRestore").checked = p.restore_on_exit;
+  document.getElementById("prefExitChequered").checked = p.exit_on_chequered;
+}
+document.getElementById("preferencesForm").addEventListener("submit", async event=>{
+  event.preventDefault();
+  const feedback = document.getElementById("preferencesFeedback");
+  const preferences = {
+    brightness:Number(document.getElementById("prefBrightness").value),
+    transition_seconds:Number(document.getElementById("prefTransition").value),
+    alert_watchdog_seconds:Number(document.getElementById("prefWatchdog").value),
+    restore_on_exit:document.getElementById("prefRestore").checked,
+    exit_on_chequered:document.getElementById("prefExitChequered").checked,
+  };
+  feedback.textContent = "Enregistrement…";
+  try{
+    await patchSettings({preferences});
+    feedback.textContent = "Préférences enregistrées.";
+    feedback.className = "bridge-feedback success";
+    showToast("Préférences enregistrées");
+  }catch(error){
+    feedback.textContent = error.message || String(error);
+    feedback.className = "bridge-feedback error";
+    renderPreferences();
+    showToast(feedback.textContent,true);
+  }
+});
+loadSettings().catch(error=>showToast(`Réglages indisponibles : ${error.message || error}`,true));
+
+previewStart.addEventListener("click", async ()=>{
+  if (isRunning || starting) return;
+  const feedback = document.getElementById("previewFeedback");
+  previewStart.disabled = true;
+  feedback.textContent = "Démarrage de l’aperçu…";
+  try{
+    const response = await fetch("/api/test/preview",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({flag:document.getElementById("previewFlag").value})});
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || "Aperçu impossible");
+    updateRunUI({running:false,pendingStart:true});
+    feedback.textContent = "Aperçu en cours sur les lampes sélectionnées.";
+    feedback.className = "bridge-feedback success";
+  }catch(error){
+    feedback.textContent = error.message || String(error);
+    feedback.className = "bridge-feedback error";
+    previewStart.disabled = false;
+    showToast(feedback.textContent,true);
+  }
+});

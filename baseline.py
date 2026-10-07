@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import json, os
+import json, os, tempfile
 from typing import Dict, List
 from hue import HueBridge
 
@@ -28,12 +28,20 @@ class BaselineStore:
             self.data = {}
 
     def _save(self):
+        temporary = None
         try:
-            os.makedirs(os.path.dirname(self.path), exist_ok=True)
-            with open(self.path, "w") as f:
+            directory = os.path.dirname(self.path)
+            os.makedirs(directory, exist_ok=True)
+            descriptor, temporary = tempfile.mkstemp(prefix=".baseline-", dir=directory)
+            with os.fdopen(descriptor, "w") as f:
                 json.dump(self.data, f, indent=2)
+            os.chmod(temporary, 0o600)
+            os.replace(temporary, self.path)
         except Exception:
             pass
+        finally:
+            if temporary and os.path.exists(temporary):
+                os.unlink(temporary)
 
     def _target_light_ids(self, bridge: HueBridge, conf: dict) -> List[int]:
         """
@@ -42,7 +50,7 @@ class BaselineStore:
           2) group_id == 0 (toutes les lampes)
           3) group_id (unique)
           4) group_ids (liste) -> union des lampes des groupes
-          5) fallback: toutes les lampes
+          5) aucune cible valide: aucune lampe
         """
         lids = conf.get("light_ids") or []
         if lids:
@@ -83,7 +91,7 @@ class BaselineStore:
             except Exception:
                 pass
 
-        return sorted(int(k) for k in lights_all.keys())
+        return []
 
     def capture(self, bridge: HueBridge, conf: dict) -> int:
         """Capture l'état actuel (on/bri + ct/xy/hs) des lampes cibles."""
@@ -116,11 +124,15 @@ class BaselineStore:
     def restore(self, bridge: HueBridge, conf: dict, fade_tenths: int = 5):
         """Restaure la baseline par lampe (transitiontime=fade_tenths)."""
         if not self.data: return 0
+        selected = set(self._target_light_ids(bridge, conf))
+        if not selected: return 0
         tt = int(max(0, fade_tenths))
         applied = 0
         for lid_s, entry in self.data.items():
             try:
                 lid = int(lid_s)
+                if lid not in selected:
+                    continue
                 payload = {"on": bool(entry.get("on", True)),
                            "transitiontime": tt}
                 m = entry.get("mode")

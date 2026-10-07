@@ -32,7 +32,7 @@ def normalize_flag(name: str) -> str:
 def _restore_on_exit(bridge: HueBridge, conf: dict, baseline: BaselineStore):
     """Restaure la baseline si activée (utilisé après Ctrl+C / fin propre)."""
     try:
-        bconf = conf.get("baseline", {}) or {}
+        bconf = ensure_conf().get("baseline", {}) or {}
         if bconf.get("restore_on_exit", True):
             fade = int(max(0, bconf.get("fade_tenths", 5)))
             print(f"[EXIT] Restauration de la baseline (tt={fade})…")
@@ -62,9 +62,22 @@ def run_live(conf: dict, stop_evt: threading.Event):
         sync_off = float(conf.get("sync", {}).get("offset_seconds", 0) or 0)
         print(f"[INFO] Live F1 : écoute des événements (offset TV {sync_off:.2f} s)…")
         try:
+            last_played = None
+            def report(event, pattern):
+                nonlocal last_played
+                last_played = (event.value, pattern)
+                print(f"[F1] {event.value} → {pattern}")
             play_effects(service.events(subscription, stop_evt, {"flag"}), engine, conf, stop_evt,
                          offset_seconds=sync_off,
-                         on_play=lambda event, pattern: print(f"[F1] {event.value} → {pattern}"))
+                         on_play=report,
+                         conf_provider=ensure_conf)
+            if last_played and last_played[0] == "CHEQUERED" and not stop_evt.is_set():
+                from settings import effect_duration
+                current = ensure_conf()
+                if current.get("flags", {}).get("exit_on_chequered", False):
+                    duration = effect_duration(current["patterns"][last_played[1]])
+                    if duration is not None:
+                        stop_evt.wait(duration + 0.1)
         finally:
             engine.stop()
             _restore_on_exit(bridge, conf, baseline)
@@ -86,16 +99,17 @@ def run_test(conf: dict, flag: str | None, quick: bool, gap: float, stop_evt: th
         baseline.capture(bridge, conf)
 
     engine = LightEngine(bridge, conf, stop_evt, baseline=baseline); engine.start()
-    seq = ["GREEN","YELLOW","SC","SC_ENDING","VSC","VSC_ENDING","RED","GREEN","CHEQUERED"] if (quick or not flag) else [flag.upper()]
+    seq = ["GREEN","YELLOW","SC","SC_ENDING","VSC","VSC_ENDING","RED","BLUE","GREEN","CHEQUERED"] if (quick or not flag) else [flag.upper()]
     print("[TEST] Simulation… Ctrl+C pour arrêter.")
     try:
         for raw in seq:
             if stop_evt.is_set(): break
             f = normalize_flag(raw)
             pattern = EffectRules(conf).pattern_for(LiveEvent(kind="flag", value=f))
+            if not pattern:
+                continue
             print(f"[TEST] {f}")
-            if pattern:
-                engine.play(pattern)
+            engine.play(pattern)
             end = time.monotonic() + max(0.1, gap)
             while time.monotonic() < end:
                 if stop_evt.wait(0.02): break

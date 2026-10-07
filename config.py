@@ -2,6 +2,7 @@
 import os
 import sys
 import shutil
+import tempfile
 import yaml
 
 # 100% relatif au repo
@@ -93,9 +94,16 @@ def ensure_conf() -> dict:
 
 
 def save_conf(conf: dict):
-    with open(CONF_PATH, "w") as f:
-        yaml.safe_dump(conf, f, sort_keys=False)
-    os.chmod(CONF_PATH, 0o600)
+    directory = os.path.dirname(os.path.abspath(CONF_PATH))
+    fd, temporary = tempfile.mkstemp(prefix=".config-", suffix=".yml", dir=directory)
+    try:
+        with os.fdopen(fd, "w") as f:
+            yaml.safe_dump(conf, f, sort_keys=False)
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, CONF_PATH)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
 
 
 def selection_missing(conf: dict) -> bool:

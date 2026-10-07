@@ -5,7 +5,14 @@ def prepare_sync_group(conf: dict, bridge) -> tuple[int | None, int]:
     conf.pop("_sync_group_id", None)
     conf.pop("_resolved_light_ids", None)
     if conf.get("group_id") is not None:
-        return None, 0
+        group_id = int(conf["group_id"])
+        if group_id == 0:
+            size = len(bridge.lights())
+        else:
+            size = len((bridge.groups().get(str(group_id)) or {}).get("lights") or [])
+        if not size:
+            raise RuntimeError("La zone Hue sélectionnée est vide ou introuvable.")
+        return None, size
 
     selected = set()
     group_ids = conf.get("group_ids") or []

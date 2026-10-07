@@ -9,6 +9,7 @@ off_transition_tenths: 5
 flags:
   ignore_blue: true
   exit_on_chequered: false
+  enabled: {}  # Réglages par drapeau enregistrés par l'interface web
 rules:
   flag_patterns: {}
 behavior:

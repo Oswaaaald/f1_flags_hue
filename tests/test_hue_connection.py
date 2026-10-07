@@ -7,6 +7,10 @@ from hue import HueBridge, HueBridgeConnectionError, connect_bridge
 
 
 class HueConnectionTests(unittest.TestCase):
+    def test_local_bridge_does_not_use_environment_proxy(self):
+        bridge = HueBridge("192.168.0.116", "private-local-key")
+        self.assertFalse(bridge.session.trust_env)
+
     def test_network_error_does_not_expose_hue_key(self):
         bridge = HueBridge("192.168.0.116", "private-local-key")
         bridge.session.request = Mock(side_effect=requests.ConnectTimeout(
