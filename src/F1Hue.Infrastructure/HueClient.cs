@@ -167,6 +167,21 @@ public sealed class HueClient(IBridgeVault vault, Func<string, string?, Action<s
         return null;
     }
     public Task PutLightAsync(string id, object state, CancellationToken ct) => Guid.TryParse(id, out _) ? RequestAsync(HttpMethod.Put, "/light/" + id, state, ct) : throw new ArgumentException("Lampe invalide.");
+    public async Task RecallSceneAsync(string id, string[] selected, bool dynamic, CancellationToken ct)
+    {
+        if (!Guid.TryParse(id, out _) || selected.Length == 0) throw new ArgumentException("Scène ou sélection Hue invalide.");
+        var scenes = await RequestAsync(HttpMethod.Get, "/scene/" + id, null, ct);
+        if (scenes.GetArrayLength() != 1) throw new ArgumentException("Scène Hue introuvable.");
+        var scene = scenes[0];
+        var targets = scene.GetProperty("actions").EnumerateArray().Select(a => a.GetProperty("target")).ToArray();
+        var inventory = await InventoryAsync(ct);
+        var group = inventory.Groups.SingleOrDefault(g => g.Id == scene.GetProperty("group").GetProperty("rid").GetString());
+        if (group is null || !group.LightIds.ToHashSet().SetEquals(selected)
+            || targets.Any(t => t.GetProperty("rtype").GetString() != "light")
+            || !targets.Select(t => t.GetProperty("rid").GetString()!).ToHashSet().SetEquals(selected))
+            throw new ArgumentException("La scène Hue doit cibler exactement les lampes sélectionnées.");
+        await RequestAsync(HttpMethod.Put, "/scene/" + id, new { recall = new { action = dynamic ? "dynamic_palette" : "static", duration = 400 } }, ct);
+    }
     public async Task<HueInventory> InventoryAsync(CancellationToken ct)
     {
         var all = (await RequestAsync(HttpMethod.Get, "", null, ct)).EnumerateArray().ToArray();

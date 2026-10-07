@@ -2,6 +2,19 @@
 
 Dernière vérification locale : 7 octobre 2026.
 
+## Preview.11 : conserver l’ambiance choisie pendant l’attente du direct
+
+Après les essais de preview.10, l’utilisateur a signalé que la lampe mauve de Galaxy était redevenue orange. Le diagnostic a confirmé que la scène Galaxy prévoit xy=(0,2745 ; 0,1326), tandis que la sauvegarde du mode contenait xy=(0,5954 ; 0,3774) pour cette lampe. La capture dès le lancement du direct pouvait restaurer un état antérieur à un changement effectué dans Hue pendant l’attente. La publication preview.10 a été annulée avec l’accord de l’utilisateur.
+
+La capture est désormais prise juste avant l’effet, puis renouvelée après une restauration terminée. Stop avant tout drapeau laisse les lampes intactes. Le diagnostic est en lecture seule ; le rappel manuel d’une scène est authentifié, limité au mode arrêté et vérifie ses actions et son groupe contre la sélection exacte.
+
+- Compilation .NET, TypeScript strict et esbuild : réussis.
+- 168 contrôles C# réussis, dont cinq contrôles supplémentaires pour Stop sans effet, Galaxy choisie pendant l’attente, la nouvelle ambiance après retour au repos, le rappel d’une scène exacte et le refus d’une zone élargie.
+- Bundle final Mac : 22 contrôles HTTP et 17 contrôles d’authentification réussis. Les nouvelles routes refusent les appels anonymes, identifiants invalides, champs inconnus et rappels pendant un mode actif. Version et absence de données privées vérifiées.
+- Application preview.11 installée dans Applications. Galaxy rétablie sur les trois lampes ; le pont a confirmé le mauve de Maxim 2 et les deux bleus prévus par la scène. Stop sans drapeau a laissé Galaxy intacte. Un arrêt 0,33 seconde après le début effectif du Safety Car a restitué les trois actions de Galaxy, en 1,62 seconde contrôles compris.
+- Réglages, mot de passe conservé et liaison Hue chiffrée inchangés. Le direct a été relancé et aucune sauvegarde prématurée n’est persistée pendant son attente. Les couleurs ci-dessus sont des confirmations du pont ; la confirmation visuelle de l’utilisateur est distincte.
+- L’utilisateur a ensuite confirmé visuellement : Galaxy est revenue correctement, avec Maxim 2 mauve et les deux autres lampes dans leurs couleurs habituelles.
+
 ## Preview.10 : confirmation de la restauration après Stop
 
 Le rendu natif de la preview.9 a été confirmé visuellement par l’utilisateur, mais celui-ci a observé un arrêt pendant une pulsation laissant une lampe orange malgré un Stop annoncé terminé. Le rappel était considéré comme terminé dès son succès HTTP et ses ressources temporaires étaient immédiatement supprimées.

@@ -57,6 +57,8 @@ Les règles de drapeaux sont relues au moment de jouer chaque événement, **apr
 
 Les clignotements utilisent `alert=lselect` (SC, VSC, damier) et `alert=select` répété pour le bleu. Le réglage **Transition** concerne les changements de couleur ; le rythme natif est fixé par les lampes. L’application renouvelle la pulsation pour les effets prolongés et envoie `alert=none` aux seules lampes choisies avant un autre drapeau ou Stop. Une annulation échouée reste réessayable et est reprise au prochain démarrage. La restauration restitue l’état statique capturé ; une animation de scène Hue externe n’est pas reconstruite.
 
+L’ambiance est mémorisée juste avant le premier drapeau joué, puis renouvelée après un retour au repos. Tu peux donc choisir une scène dans Hue pendant l’attente du direct. Stop sans drapeau joué laisse les lampes intactes. Lors d’une restauration, l’application attend que le pont confirme les états des lampes et retente le rappel groupé si nécessaire.
+
 ## Données F1
 
 Une seule connexion au flux officiel :

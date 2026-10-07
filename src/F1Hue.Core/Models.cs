@@ -64,6 +64,7 @@ public static class JsonDefaults
 public interface ISettingsStore { AppSettings Read(); void Save(AppSettings settings); }
 public interface IEffectOutput
 {
+    Task PrepareAsync(AppSettings settings, CancellationToken cancellationToken) => CaptureAsync(settings, cancellationToken);
     Task CaptureAsync(AppSettings settings, CancellationToken cancellationToken);
     Task ApplyAsync(RaceFlag flag, EffectSpec effect, AppSettings settings, CancellationToken cancellationToken);
     Task EndAnimationAsync(CancellationToken cancellationToken);

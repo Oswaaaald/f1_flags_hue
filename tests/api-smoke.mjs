@@ -29,6 +29,8 @@ async function req(url,method='GET',body,expected=200,headers={}){
 try{
  for(let i=0;;i++){try{const r=await fetch(base+'/health');if(r.ok)break;}catch{}if(i>100)throw new Error('Service did not start: '+logs);await new Promise(r=>setTimeout(r,100));}
  await req('/api/state','GET',undefined,401);check(true,'Anonymous callers cannot read state');
+ await req('/api/hue/diagnostics','GET',undefined,401);await req('/api/hue/scene','POST',{id:'11111111-1111-1111-1111-111111111111'},401);
+ check(true,'Hue diagnostic and scene recovery routes require authentication');
  await req('/api/settings','PATCH',{},403,{'X-F1Hue-Request':''});check(true,'Unsafe requests require custom anti-CSRF header');
  await req('/api/auth/status','GET',undefined,403,{Origin:'https://evil.example'});check(true,'Cross-origin requests rejected');
  const badHost=await new Promise((resolve,reject)=>{const request=http.request(base+'/health',{headers:{Host:'attacker.example'}},r=>{r.resume();resolve(r.statusCode);});request.on('error',reject);request.end();});check(badHost===403,'Unknown Host rejected against DNS rebinding');
@@ -43,12 +45,19 @@ try{
  await req('/api/hue/select','POST',{lightIds:['missing'],groupIds:[],entertainmentAreaId:null},400);
  await req('/api/hue/select','POST',{lightIds:[],groupIds:[inventory.groups[0].id],entertainmentAreaId:null});check(true,'Pairing and group selection routes work; invalid selection rejected');
  await req('/api/hue/import-selection','POST');
+ const diagnostics=(await req('/api/hue/diagnostics')).body;
+ await req('/api/hue/scene','POST',{id:'../../all'},400);
+ await req('/api/hue/scene','POST',{id:inventory.groups[0].id,dynamic:'yes'},400);
+ await req('/api/hue/scene','POST',{id:inventory.groups[0].id,applicationKey:'bad'},400);
+ await req('/api/hue/scene','POST',{id:inventory.groups[0].id});
+ check(Array.isArray(diagnostics.lights)&&Array.isArray(diagnostics.scenes),'Hue diagnostics and scene recovery accept validated requests and reject injected paths or fields');
  await req('/api/settings','PATCH',{username:'bad'},400);
  await req('/api/settings','PATCH',{effects:{BLUE:{enabled:true,durationSeconds:.1}},offsetSeconds:0});
  const settings=(await req('/api/settings')).body;check(settings.effects.BLUE.enabled&&settings.effects.BLUE.durationSeconds===.1,'Settings patch saves validated values');
  await req('/api/test/preview','POST',{flag:'PURPLE'},400);
  await req('/api/test/preview','POST',{flag:'RED'});
  await req('/api/hue/select','POST',{lightIds:[inventory.lights[0].id],groupIds:[],entertainmentAreaId:null},409);
+ await req('/api/hue/scene','POST',{id:inventory.groups[0].id},409);
  await req('/api/test/sequence','POST',undefined,409);
  await req('/api/stop','POST');check(true,'Preview owns targets; conflicting modes and target changes rejected');
  for(let i=0;i<3;i++){

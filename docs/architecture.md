@@ -46,6 +46,10 @@ Depuis preview.9, plusieurs lampes retrouvent leurs états individuels par un se
 
 Depuis preview.10, le succès HTTP du rappel ne suffit plus à terminer Stop. La scène et sa zone sont conservées pendant le fondu, puis deux lectures des états des lampes, espacées de 250 ms, vérifient le résultat. Un état incomplet déclenche un nouveau rappel du même groupe, avec trois essais au maximum. Les tolérances couvrent la quantification de luminosité, mirek et xy. Pour une lampe éteinte, l’extinction est vérifiée ; le pont ne confirme pas toujours les paramètres de couleur d’une lampe éteinte. Un échec conserve la scène et la sauvegarde pour Réessayer Stop. Un nouveau drapeau ou Stop annule la vérification du minuteur précédent avant de prendre le verrou du moteur, pour éviter que ces contrôles retardent un effet plus récent.
 
+Depuis preview.11, le lancement d’un mode valide les lampes et récupère un arrêt réellement incomplet, mais ne capture plus l’ambiance d’avance. La sauvegarde est prise juste avant le premier effet joué ; arrêter un direct sans avoir joué de drapeau ne modifie aucune couleur. Après une restauration terminée, l’effet suivant capture à nouveau l’ambiance courante, y compris une scène choisie entre-temps dans Hue. La sélection reste fixe pendant le mode.
+
+Le diagnostic authentifié `GET /api/hue/diagnostics` lit les états des lampes sélectionnées et les scènes qui les concernent, sans clé Hue. `POST /api/hue/scene` permet de rappeler une scène existante uniquement à l’arrêt : son identifiant doit être un UUID, ses actions et la composition actuelle de son groupe doivent cibler exactement la sélection. Le rappel d’une scène plus large est refusé avant toute écriture.
+
 ## Stockage et sécurité
 
 SQLite stocke les réglages validés, événements dérivés et sessions d’authentification hachées du mode serveur. Les sessions de bureau sont hachées et conservées en mémoire. Aucun besoin d’un serveur de base de données. Le journal est limité à 100 000 événements.

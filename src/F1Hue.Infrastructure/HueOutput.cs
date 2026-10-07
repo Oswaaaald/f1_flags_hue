@@ -12,6 +12,19 @@ public sealed class HueOutput(HueClient client, Store store, TimeProvider? time 
     private readonly HueSnapshot _snapshot = new(client, store, time);
     private bool _restored;
     private string?[] _legacyLights = [];
+    public async Task PrepareAsync(AppSettings settings, CancellationToken ct)
+    {
+        if (store.Get<Dictionary<string, JsonElement>>("pending_restore") is not null || store.Get<string>("pending_entertainment") is not null
+            || store.Get<string[]>("pending_native_alert") is not null || store.Get<HueSnapshotLease>(HueSnapshot.Key) is not null)
+            await RecoverAsync(ct);
+        _baseline = []; _legacyLights = []; _solidTarget = null; _restored = false;
+        // Starting a live connection does not own the current ambiance yet.
+        // The user may change it in Hue while waiting for the first flag.
+        var lights = await client.RequestAsync(HttpMethod.Get, "/light", null, ct);
+        var selected = lights.EnumerateArray().Where(l => settings.LightIds.Contains(l.GetProperty("id").GetString()!)).ToArray();
+        if (selected.Length != settings.LightIds.Length || selected.Length == 0 || selected.Any(l => !l.TryGetProperty("color", out _)))
+            throw new InvalidOperationException("La sélection Hue a changé. Choisis à nouveau les lampes.");
+    }
     public async Task CaptureAsync(AppSettings settings, CancellationToken ct)
     {
         if (store.Get<Dictionary<string, JsonElement>>("pending_restore") is not null || store.Get<string>("pending_entertainment") is not null
@@ -68,6 +81,9 @@ public sealed class HueOutput(HueClient client, Store store, TimeProvider? time 
     }
     public async Task ApplyAsync(RaceFlag flag, EffectSpec effect, AppSettings settings, CancellationToken ct)
     {
+        // Capture at the first actual color change, and recapture after a
+        // completed restore so changes made during idle are not overwritten.
+        if (_baseline.Count == 0 || _restored) await CaptureAsync(settings, ct);
         store.Put("pending_restore", _baseline);
         _restored = false;
         if (effect.Mode == "blink")

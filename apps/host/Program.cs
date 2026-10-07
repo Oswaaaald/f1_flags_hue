@@ -170,6 +170,24 @@ api.MapPost("/calibration/cancel", () => { calibration.Cancel(); return Results.
 api.MapPost("/hue/discover", async (CancellationToken ct) => new { addresses = simulate ? new[] { "192.168.1.10" } : await HueDiscovery.DiscoverAsync(ct) });
 api.MapPost("/hue/pair", async (JsonElement body, CancellationToken ct) => { Idle(); if (!simulate) await hue.PairAsync(Text(body, "ip"), ct); Changed(); return Results.Ok(new { ok = true }); });
 api.MapGet("/hue/inventory", async (CancellationToken ct) => simulate ? SimulationOutput.Inventory : await hue.InventoryAsync(ct));
+api.MapGet("/hue/diagnostics", async (CancellationToken ct) =>
+{
+    var selected = store.Read().LightIds.ToHashSet();
+    if (simulate) return Results.Ok(new { lights = Array.Empty<object>(), scenes = Array.Empty<object>() });
+    var lights = (await hue.RequestAsync(HttpMethod.Get, "/light", null, ct)).EnumerateArray()
+        .Where(l => selected.Contains(l.GetProperty("id").GetString()!)).Select(l => l.Clone()).ToArray();
+    var scenes = (await hue.RequestAsync(HttpMethod.Get, "/scene", null, ct)).EnumerateArray()
+        .Where(s => s.GetProperty("actions").EnumerateArray().Any(a => selected.Contains(a.GetProperty("target").GetProperty("rid").GetString()!)))
+        .Select(s => s.Clone()).ToArray();
+    return Results.Ok(new { lights, scenes });
+});
+api.MapPost("/hue/scene", async (SceneRecallRequest request, CancellationToken ct) =>
+{
+    Idle();
+    if (!Guid.TryParse(request.Id, out _)) throw new ArgumentException("Scène Hue invalide.");
+    if (!simulate) await hue.RecallSceneAsync(request.Id, store.Read().LightIds, request.Dynamic, ct);
+    return Results.Ok(new { ok = true });
+});
 api.MapPost("/hue/import-selection", async (CancellationToken ct) => { Idle(); var mapped = LegacyImport.ResolveSelection(store, simulate ? SimulationOutput.Inventory : await hue.InventoryAsync(ct)); Changed(); return new { mapped }; });
 api.MapPost("/hue/select", async (SelectionRequest request, CancellationToken ct) =>
 {
@@ -247,6 +265,7 @@ try { await app.StartAsync(); listening.SetResult(); await app.WaitForShutdownAs
 finally { shutdown.Cancel(); await feedTask; await startup; await stopWatcher; await runner.StopAsync(); }
 
 public sealed record SelectionRequest(string[] LightIds, string[] GroupIds, string? EntertainmentAreaId);
+public sealed record SceneRecallRequest(string Id, bool Dynamic = false);
 public sealed class SimulationOutput : IEffectOutput
 {
     public static readonly HueInventory Inventory = new([new("11111111-1111-1111-1111-111111111111", "Lampe salon", true, "/lights/1"), new("22222222-2222-2222-2222-222222222222", "Ruban TV", true, "/lights/2")], [new("33333333-3333-3333-3333-333333333333", "Salon", "room", ["11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222"], "/groups/1")], []);

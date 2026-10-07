@@ -31,6 +31,8 @@ Les clignotements SC, VSC et damier utilisent la pulsation native du pont, comme
 
 Stop attend maintenant la confirmation des états des lampes avant de terminer. Une lampe restée sur la couleur du drapeau déclenche une nouvelle tentative groupée ; un échec conserve l’état initial et propose de réessayer l’arrêt.
 
+L’ambiance est mémorisée juste avant le premier drapeau, puis à nouveau après un retour au repos. Une scène choisie dans Hue pendant l’attente du direct est conservée. Stop sans drapeau joué ne change plus les couleurs.
+
 Les applications Mac et Windows te connectent automatiquement à l’interface, sans mot de passe à créer. Utilise leur menu **Ouvrir F1 Hue Sync** pour te reconnecter. Les installations réseau, Linux et Docker gardent la connexion par mot de passe.
 
 Sur Mac, le trousseau peut demander séparément l’accès à **F1Hue.Vault**, qui protège la liaison à ton pont Hue.

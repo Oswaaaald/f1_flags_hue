@@ -37,7 +37,7 @@ public sealed class Runner(ISettingsStore store, ILiveFeed feed, IEffectOutput o
             if (targets.LightIds.Length == 0) throw new InvalidOperationException("Choisis au moins une lampe dans Hue.");
             try
             {
-                await output.CaptureAsync(targets, ct);
+                await output.PrepareAsync(targets, ct);
                 ct.ThrowIfCancellationRequested();
             }
             catch (Exception e) { RecoveryFailed(e); throw; }

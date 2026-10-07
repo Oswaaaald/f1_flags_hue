@@ -125,6 +125,36 @@ internal static class SnapshotTests
             var restored = J(bridge.Calls.Last().Body);
             check(!solid.TryGetProperty("effects", out _) && restored.TryGetProperty("gradient", out _)
                 && bridge.Scenes.Resources.Count == 0, "A single-lamp flag and gradient restoration use compatible color modes without creating a zone");
+            var waiting = new HueOutput(client, store);
+            await waiting.PrepareAsync(settings, CancellationToken.None); bridge.Calls.Clear();
+            await using (var engine = new EffectEngine(waiting)) await engine.StopAsync(true);
+            await waiting.ReleaseAsync(CancellationToken.None);
+            check(!bridge.Calls.Any(c => c.Method != HttpMethod.Get) && store.Get<JsonElement?>("pending_restore") is null,
+                "Stopping a live connection before its first flag leaves the current Hue ambiance untouched");
+
+            await waiting.PrepareAsync(settings, CancellationToken.None);
+            bridge.Purple = true;
+            await waiting.ApplyAsync(RaceFlag.SC, settings.Effects[RaceFlag.SC], settings, CancellationToken.None);
+            var captured = bridge.Scene["actions"]!.AsArray().Single(a => a!["target"]!["rid"]!.GetValue<string>() == B)!["action"]!;
+            check(captured["color"]!["xy"]!["x"]!.GetValue<double>() == .2745 && captured["gradient"] is null,
+                "Galaxy purple selected while waiting is captured immediately before the flag, instead of the stale startup state");
+            var sceneId = bridge.Scene["id"]!.GetValue<string>();
+            bridge.Calls.Clear();
+            await client.RecallSceneAsync(sceneId, settings.LightIds, false, CancellationToken.None);
+            check(bridge.Calls.Last().Method == HttpMethod.Put && J(bridge.Calls.Last().Body).GetProperty("recall").GetProperty("action").GetString() == "static",
+                "Manual scene recovery recalls only a scene and group matching the exact lamp selection");
+            var sceneZone = bridge.Scenes.Resources.Values.Single(r => r["type"]!.GetValue<string>() == "zone");
+            sceneZone["children"]!.AsArray().Add(JsonSerializer.SerializeToNode(new { rid = Bridge.Outside, rtype = "light" }));
+            bridge.Calls.Clear(); rejected = false;
+            try { await client.RecallSceneAsync(sceneId, settings.LightIds, false, CancellationToken.None); } catch (ArgumentException) { rejected = true; }
+            check(rejected && bridge.Calls.All(c => c.Method == HttpMethod.Get), "Manual scene recovery rejects a group containing any unselected lamp before writing");
+            sceneZone["children"]!.AsArray().RemoveAt(2);
+            await waiting.EndAnimationAsync(CancellationToken.None); await waiting.RestoreAsync(CancellationToken.None); await waiting.ReleaseAsync(CancellationToken.None);
+            bridge.Purple = false;
+            await waiting.ApplyAsync(RaceFlag.RED, settings.Effects[RaceFlag.RED], settings, CancellationToken.None);
+            captured = bridge.Scene["actions"]!.AsArray().Single(a => a!["target"]!["rid"]!.GetValue<string>() == B)!["action"]!;
+            check(captured["gradient"] is not null, "After a completed restoration, the next flag captures the new idle ambiance");
+            await waiting.RestoreAsync(CancellationToken.None); await waiting.ReleaseAsync(CancellationToken.None);
             check(bridge.ClientCreations == 1, "Hue v1/v2 requests reuse one pinned HTTPS transport instead of opening a new connection for each command");
         }
         finally { Directory.Delete(directory, true); }
@@ -135,6 +165,7 @@ internal static class SnapshotTests
         public readonly SceneBridge Scenes = new();
         public readonly List<(HttpMethod Method, string Path, string Body)> Calls = [];
         public int ClientCreations;
+        public bool Purple;
         public JsonObject Scene => Scenes.Resources.Values.Single(r => r["type"]!.GetValue<string>() == "scene");
         public HueClient Client() => new(new MemoryVault(), (_, pin, _) =>
         {
@@ -147,11 +178,20 @@ internal static class SnapshotTests
             var path = request.RequestUri!.AbsolutePath.TrimStart('/').Replace("api/private-test-key/", "", StringComparison.Ordinal);
             var body = request.Content is null ? "" : await request.Content.ReadAsStringAsync(ct);
             Calls.Add((request.Method, path, body));
-            var response = path.StartsWith("clip/") ? Scenes.Reply(path, request.Method, body, [
+            object[] lights = [
                 J("{\"id\":\"" + A + "\",\"type\":\"light\",\"id_v1\":\"/lights/1\",\"owner\":{\"rid\":\"" + SceneBridge.Device(A) + "\",\"rtype\":\"device\"},\"on\":{\"on\":false},\"dimming\":{\"brightness\":21},\"color_temperature\":{\"mirek\":250,\"mirek_valid\":true},\"color\":{\"xy\":{\"x\":0.3,\"y\":0.4}}}"),
                 J("{\"id\":\"" + B + "\",\"type\":\"light\",\"id_v1\":\"/lights/2\",\"owner\":{\"rid\":\"" + SceneBridge.Device(B) + "\",\"rtype\":\"device\"},\"on\":{\"on\":true},\"dimming\":{\"brightness\":78},\"color\":{\"xy\":{\"x\":0.17,\"y\":0.7}},\"gradient\":{\"mode\":\"interpolated_palette\",\"points\":[{\"color\":{\"xy\":{\"x\":0.1,\"y\":0.3}}},{\"color\":{\"xy\":{\"x\":0.2,\"y\":0.4}}}]},\"effects\":{\"status\":\"no_effect\"}}"),
                 new { id = Outside, type = "light", id_v1 = "/lights/3", owner = new { rid = SceneBridge.Device(Outside), rtype = "device" }, on = new { on = true }, color = new { xy = new { x = .2, y = .3 } } },
-            ]) : path == "groups" ? "{\"7\":{\"lights\":[\"1\",\"2\"]}}" : path == "groups/7" ? "{\"lights\":[\"1\",\"2\"]}" : "[{\"success\":{\"state\":true}}]";
+            ];
+            if (Purple)
+            {
+                var changed = JsonSerializer.SerializeToNode(lights[1])!.AsObject();
+                changed.Remove("gradient");
+                changed["color"] = JsonSerializer.SerializeToNode(new { xy = new { x = .2745, y = .1326 } });
+                lights[1] = changed;
+            }
+            var response = path.StartsWith("clip/") ? Scenes.Reply(path, request.Method, body, lights)
+                : path == "groups" ? "{\"7\":{\"lights\":[\"1\",\"2\"]}}" : path == "groups/7" ? "{\"lights\":[\"1\",\"2\"]}" : "[{\"success\":{\"state\":true}}]";
             return new(HttpStatusCode.OK) { Content = new StringContent(response, System.Text.Encoding.UTF8, "application/json") };
         }
     }
