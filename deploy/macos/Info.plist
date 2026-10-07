@@ -6,7 +6,7 @@
 <key>CFBundleName</key><string>F1 Hue Sync</string>
 <key>CFBundleDisplayName</key><string>F1 Hue Sync</string>
 <key>CFBundleShortVersionString</key><string>2.0.0</string>
-<key>CFBundleVersion</key><string>20012</string>
+<key>CFBundleVersion</key><string>20013</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>LSMinimumSystemVersion</key><string>15.0</string>
 <key>LSUIElement</key><true/>

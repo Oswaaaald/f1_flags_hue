@@ -25,6 +25,8 @@ Ouvre le fichier téléchargé et suis les étapes de l’installation.
 
 Tes réglages et ta liaison Hue sont conservés lors d’une mise à jour.
 
+Dans **Direct → Calibration TV**, ajuste le décalage avec les boutons **±0,1 / 0,5 / 1 / 5 secondes**. Chaque clic est enregistré et s’applique aux prochains événements reçus, sans arrêter le direct. La saisie manuelle et les outils de mesure restent disponibles.
+
 Après Stop, les champs Hue et les boutons de lancement redeviennent disponibles dès la fin de l’arrêt, sans changer d’onglet. Les modifications non enregistrées du formulaire sont conservées.
 
 Les couleurs des drapeaux sont envoyées en une seule commande au groupe exact des lampes choisies, avec le fondu configuré. L’application n’ajoute plus de pause entre chaque lampe pour ces changements de couleur.

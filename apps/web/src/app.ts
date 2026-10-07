@@ -8,6 +8,8 @@ import { tests, scenarioOptions } from "./views/tests";
 import { flagSettings, preferences } from "./views/settings";
 
 let stopRequested = false;
+let offsetDirty = false;
+let offsetSaving = false;
 const pending = new WeakSet<HTMLElement>();
 let state: State;
 let inventory: Inventory | null = null;
@@ -104,6 +106,7 @@ function navigate(next: string) {
   render();
 }
 function render() {
+  offsetDirty = false;
   $("#main").innerHTML =
     '<div id="runner-error" class="notice error" role="alert" hidden></div>' +
     (page === "live"
@@ -251,6 +254,37 @@ function update() {
   updateCalibration();
 }
 function updateCalibration() {
+  const offsetInput =
+    document.querySelector<HTMLInputElement>('[name="offset"]');
+  if (offsetInput) {
+    if (!offsetDirty && !offsetSaving)
+      offsetInput.value = String(state.settings.offsetSeconds);
+    offsetInput.disabled = offsetSaving;
+    document
+      .querySelectorAll<HTMLButtonElement>('[data-action^="adjust-offset:"]')
+      .forEach((b) => {
+        const delta = Number(b.dataset.action!.split(":")[1]);
+        b.disabled =
+          offsetSaving ||
+          offsetDirty ||
+          (delta < 0 && state.settings.offsetSeconds <= 0) ||
+          (delta > 0 && state.settings.offsetSeconds >= 3600);
+      });
+    const save = document.querySelector<HTMLButtonElement>(
+      '[data-form="offset"] button[type="submit"]',
+    );
+    if (save) save.disabled = offsetSaving;
+    const use = document.querySelector<HTMLButtonElement>(
+      '[data-action="use-offset"]',
+    );
+    if (use)
+      use.disabled = offsetSaving || state.calibration.proposedOffset === null;
+    $("#offset-feedback").textContent = offsetSaving
+      ? "Enregistrement…"
+      : offsetDirty
+        ? "Valeur modifiée : enregistre-la pour utiliser les boutons d’ajustement."
+        : "Chaque clic est enregistré, même pendant le direct. Limites : 0 à 3 600 secondes.";
+  }
   const status = document.querySelector("#calibration-status");
   if (status) {
     const c = state.calibration;
@@ -259,13 +293,14 @@ function updateCalibration() {
       : c.reference
         ? `Repère reçu : ${c.mode === "start" ? "départ de la course" : c.mode === "lap" ? "tour " + c.reference.value : (labels[c.reference.value as Flag] ?? c.reference.value)}. Clique quand tu le vois à la TV.`
         : "Choisis un repère pour démarrer.";
-    document.querySelector<HTMLButtonElement>(
+    const seen = document.querySelector<HTMLButtonElement>(
       '[data-action="seen"]',
-    )!.disabled = !c.reference || c.proposedOffset !== null;
+    )!;
+    seen.disabled =
+      !c.reference || c.proposedOffset !== null || pending.has(seen);
+    $("#offset-measurement").hidden = c.proposedOffset === null;
     $("#proposed-offset").textContent =
-      c.proposedOffset !== null
-        ? `${c.proposedOffset} secondes`
-        : "Aucune mesure";
+      c.proposedOffset !== null ? `${c.proposedOffset} secondes` : "";
   }
   const clock = document.querySelector("#session-clock");
   if (clock) {
@@ -301,6 +336,22 @@ function updateCalibration() {
 window.setInterval(() => {
   if (state && page === "live" && tab === "calibration") updateCalibration();
 }, 250);
+async function saveOffset(value: number, relative = false) {
+  if (offsetSaving) return;
+  offsetSaving = true;
+  updateCalibration();
+  try {
+    state.settings = await api<State["settings"]>(
+      relative ? "/calibration/adjust" : "/settings",
+      relative ? "POST" : "PATCH",
+      relative ? { deltaSeconds: value } : { offsetSeconds: value },
+    );
+    offsetDirty = false;
+  } finally {
+    offsetSaving = false;
+    update();
+  }
+}
 async function boot() {
   await refresh();
   $("#auth").hidden = true;
@@ -353,12 +404,17 @@ async function action(name: string, target: HTMLElement) {
     toast("Mesure calculée. Tu peux l’utiliser puis l’enregistrer.");
   } else if (name === "cancel-calibration")
     await api("/calibration/cancel", "POST");
-  else if (name === "use-offset") {
+  else if (name.startsWith("adjust-offset:")) {
+    if (offsetSaving || offsetDirty) return;
+    await saveOffset(Number(name.split(":")[1]), true);
+  } else if (name === "use-offset") {
     if (state.calibration.proposedOffset === null)
       throw new Error("Effectue d’abord une mesure.");
     $<HTMLInputElement>('[name="offset"]').value = String(
       state.calibration.proposedOffset,
     );
+    offsetDirty = true;
+    updateCalibration();
     return;
   } else if (name === "discover") {
     const r = await api<{ addresses: string[] }>("/hue/discover", "POST");
@@ -463,6 +519,15 @@ document.addEventListener("change", (event) => {
       .then((rows) => ($("#journal-list").innerHTML = logs(rows, 1000)))
       .catch((e) => toast(e.message, true));
 });
+document.addEventListener("input", (event) => {
+  const input = event.target;
+  if (input instanceof HTMLInputElement && input.name === "offset") {
+    offsetDirty =
+      input.value === "" ||
+      input.valueAsNumber !== state.settings.offsetSeconds;
+    updateCalibration();
+  }
+});
 document.addEventListener("submit", (event) => {
   const form = event.target as HTMLFormElement;
   if (!form.dataset.form) return;
@@ -492,9 +557,7 @@ document.addEventListener("submit", (event) => {
       });
       toast("Mesure calculée. Utilise-la puis enregistre le décalage.");
     } else if (kind === "offset") {
-      await api("/settings", "PATCH", {
-        offsetSeconds: Number(data.get("offset")),
-      });
+      await saveOffset(Number(data.get("offset")));
       toast("Décalage enregistré pour les prochains événements reçus.");
     } else if (kind === "pair") {
       await api("/hue/pair", "POST", { ip: data.get("ip") });

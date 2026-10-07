@@ -2,6 +2,18 @@
 
 Dernière vérification locale : 7 octobre 2026.
 
+## Preview.13 : ajustement manuel précis de l’offset
+
+Calibration TV commence par les boutons ±0,1 / 0,5 / 1 / 5 secondes, avec la valeur enregistrée et le sens de chaque ajustement. Chaque clic sauvegarde le délai pendant le direct. La saisie absolue et l’application d’une mesure restent disponibles ; un brouillon manuel bloque les boutons relatifs jusqu’à son enregistrement. Le bloc de mesure reste masqué en l’absence de résultat, puis propose de reporter la mesure dans le champ avant enregistrement. Les instructions du chrono proposent de préparer un repère à l’avance, puis de cliquer lorsqu’il apparaît sur la TV.
+
+L’API authentifiée `/api/calibration/adjust` applique le delta à la dernière valeur enregistrée sous le verrou des commandes. Les appels concurrents ne perdent donc pas leurs incréments. La valeur reste entre 0 et 3 600 secondes ; les données invalides et les champs inconnus sont refusés. L’ordonnanceur conserve son comportement : seul le délai des nouveaux événements reçus change.
+
+- Compilation .NET sans avertissement, TypeScript strict, esbuild et formatage : réussis ; 168 contrôles C# existants réussis.
+- 27 contrôles HTTP réussis, également sur le paquet Mac final. Les cinq nouveaux contrôles couvrent l’authentification, les requêtes invalides sans mutation, dix incréments concurrents pendant le direct, le retrait de délai et la conservation des autres réglages, puis les bornes.
+- Application preview.13 installée dans Applications avec sauvegarde. Dans Firefox, Calibration affiche les nouveaux contrôles ; +0,1 s fait passer 41,5 à 41,6 s, puis −0,1 s retrouve 41,5 s pendant le direct. Aucun effet n’a été déclenché : la séance était terminée.
+- L’absence du bloc de mesure vide est confirmée dans l’application finale. La vue adaptative Firefox à 402 pixels montre les huit boutons lisibles, sans débordement, avec Stop accessible. Retour à l’affichage normal après vérification.
+- La liaison Hue chiffrée, le mot de passe serveur et les autres réglages sont conservés. La valeur d’offset ensuite choisie par l’utilisateur pendant la vérification est laissée en place.
+
 ## Preview.12 : déverrouiller les champs dès la fin de Stop
 
 Les champs Hue recevaient leur état désactivé au rendu de la page, mais les mises à jour du direct et de Stop ne le recalculaient pas. Une fonction commune actualise désormais les contrôles Hue, Direct et Tests à chaque état reçu. Le verrou reste actif pendant l’initialisation, le mode, l’arrêt et une restauration incomplète. Les requêtes en cours conservent leur propre verrou et les lampes sans couleur restent indisponibles.

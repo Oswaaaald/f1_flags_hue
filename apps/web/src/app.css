@@ -647,6 +647,22 @@
     font-weight: 500;
     margin: 18px 0 5px;
   }
+  .offset-current {
+    font-size: 28px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    color: var(--accent);
+  }
+  .offset-steps {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+    margin-top: 14px;
+  }
+  .offset-steps .button {
+    padding-inline: 8px;
+    font-variant-numeric: tabular-nums;
+  }
   .method-list {
     display: grid;
     grid-template-columns: repeat(3, 1fr);

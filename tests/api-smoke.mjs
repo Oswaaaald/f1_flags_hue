@@ -29,6 +29,7 @@ async function req(url,method='GET',body,expected=200,headers={}){
 try{
  for(let i=0;;i++){try{const r=await fetch(base+'/health');if(r.ok)break;}catch{}if(i>100)throw new Error('Service did not start: '+logs);await new Promise(r=>setTimeout(r,100));}
  await req('/api/state','GET',undefined,401);check(true,'Anonymous callers cannot read state');
+ await req('/api/calibration/adjust','POST',{deltaSeconds:.1},401);check(true,'Manual offset adjustment requires authentication');
  await req('/api/hue/diagnostics','GET',undefined,401);await req('/api/hue/scene','POST',{id:'11111111-1111-1111-1111-111111111111'},401);
  check(true,'Hue diagnostic and scene recovery routes require authentication');
  await req('/api/settings','PATCH',{},403,{'X-F1Hue-Request':''});check(true,'Unsafe requests require custom anti-CSRF header');
@@ -106,6 +107,25 @@ try{
  await send('ExtrapolatedClock',{Utc:new Date().toISOString(),Remaining:'00:10:00',Extrapolating:true});await req('/api/calibration/clock','POST',{remaining:'11:00'});await req('/api/calibration/cancel','POST');check(true,'Lap and countdown calibration routes succeed');
  await req('/api/calibration/arm','POST',{mode:'invalid'},400);
  await req('/api/calibration/clock','POST',{remaining:'bad'},400);
+ const beforeOffset=(await req('/api/settings')).body;
+ for(const body of [{}, {deltaSeconds:0}, {deltaSeconds:61}, {deltaSeconds:-61}, {deltaSeconds:null}, {deltaSeconds:'bad'}, {deltaSeconds:.1,lightIds:[]}])
+  await req('/api/calibration/adjust','POST',body,400);
+ assert.deepEqual((await req('/api/settings')).body,beforeOffset);
+ check(true,'Invalid offset adjustments are rejected without changing settings');
+ await req('/api/settings','PATCH',{offsetSeconds:41.5});
+ await Promise.all(Array.from({length:10},()=>req('/api/calibration/adjust','POST',{deltaSeconds:.1})));
+ const adjusted=(await req('/api/settings')).body;
+ state=(await req('/api/state')).body;
+ assert.deepEqual({...adjusted,offsetSeconds:beforeOffset.offsetSeconds},beforeOffset);
+ check(adjusted.offsetSeconds===42.5&&state.runner.running&&state.runner.mode==='live'&&state.runner.lastFlag==='RED','Concurrent fine adjustments accumulate exactly during live and preserve all other settings');
+ const advanced=(await req('/api/calibration/adjust','POST',{deltaSeconds:-.5})).body;
+ check(advanced.offsetSeconds===42&&(await req('/api/state')).body.settings.offsetSeconds===42,'Negative adjustment advances effects and persists the new offset');
+ await req('/api/settings','PATCH',{offsetSeconds:0});
+ assert.equal((await req('/api/calibration/adjust','POST',{deltaSeconds:-5})).body.offsetSeconds,0);
+ await req('/api/settings','PATCH',{offsetSeconds:3599.9});
+ assert.equal((await req('/api/calibration/adjust','POST',{deltaSeconds:5})).body.offsetSeconds,3600);
+ check(true,'Manual adjustment stays within the supported 0–3600 second range');
+ await req('/api/settings','PATCH',{offsetSeconds:beforeOffset.offsetSeconds});
  const controller=new AbortController();const sse=await fetch(base+'/api/events',{headers:{Cookie:cookie},signal:controller.signal});const reader=sse.body.getReader();const event=new TextDecoder().decode((await reader.read()).value);check(event.startsWith('data: '),'Authenticated SSE delivers state');controller.abort();
  await req('/api/stop','POST');
  const journal=(await req('/api/journal')).body;check(journal.some(e=>e.value==='RED'&&e.receivedAt),'Journal contains timestamped live flag');

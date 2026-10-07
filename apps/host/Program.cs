@@ -167,6 +167,11 @@ api.MapPost("/calibration/arm", (JsonElement body) => { calibration.Arm(Text(bod
 api.MapPost("/calibration/seen", () => new { offset = calibration.Seen() });
 api.MapPost("/calibration/clock", (JsonElement body) => new { offset = calibration.Compare(Text(body, "remaining")) });
 api.MapPost("/calibration/cancel", () => { calibration.Cancel(); return Results.Ok(new { ok = true }); });
+api.MapPost("/calibration/adjust", (OffsetAdjustmentRequest request) =>
+{
+    var settings = SettingsPatch.AdjustOffset(store.Read(), request.DeltaSeconds);
+    store.Save(settings); Changed(); return settings;
+});
 api.MapPost("/hue/discover", async (CancellationToken ct) => new { addresses = simulate ? new[] { "192.168.1.10" } : await HueDiscovery.DiscoverAsync(ct) });
 api.MapPost("/hue/pair", async (JsonElement body, CancellationToken ct) => { Idle(); if (!simulate) await hue.PairAsync(Text(body, "ip"), ct); Changed(); return Results.Ok(new { ok = true }); });
 api.MapGet("/hue/inventory", async (CancellationToken ct) => simulate ? SimulationOutput.Inventory : await hue.InventoryAsync(ct));
@@ -266,6 +271,7 @@ finally { shutdown.Cancel(); await feedTask; await startup; await stopWatcher; a
 
 public sealed record SelectionRequest(string[] LightIds, string[] GroupIds, string? EntertainmentAreaId);
 public sealed record SceneRecallRequest(string Id, bool Dynamic = false);
+public sealed record OffsetAdjustmentRequest(double DeltaSeconds);
 public sealed class SimulationOutput : IEffectOutput
 {
     public static readonly HueInventory Inventory = new([new("11111111-1111-1111-1111-111111111111", "Lampe salon", true, "/lights/1"), new("22222222-2222-2222-2222-222222222222", "Ruban TV", true, "/lights/2")], [new("33333333-3333-3333-3333-333333333333", "Salon", "room", ["11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222"], "/groups/1")], []);

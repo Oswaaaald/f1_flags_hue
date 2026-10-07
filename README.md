@@ -46,7 +46,7 @@ Extraire le paquet correspondant puis exécuter `./install.sh`. Le service utili
 ## Fonctionnalités
 
 - **Direct** : état du flux, séance, effet actif, lampes ciblées, Stop et journal horodaté.
-- **Calibration** : temps restant d’essais/qualifications ; clic au départ, au prochain drapeau ou au prochain tour pour la course.
+- **Calibration** : temps restant d’essais/qualifications ; clic au départ, au prochain drapeau ou au prochain tour pour la course. Ajustement manuel avec des pas de ±0,1 / 0,5 / 1 / 5 secondes, enregistrés à chaque clic, ou saisie d’une valeur précise. Réduire le délai avance les effets ; l’augmenter les retarde. Le nouveau délai s’applique aux prochains événements reçus, sans redémarrer le direct ; les événements déjà en attente gardent leur délai.
 - **Hue** : découverte, liaison au bouton physique, choix précis de zones ou de lampes couleur. HTTPS avec empreinte du certificat du pont mémorisée lors du premier contact.
 - **Tests** : aperçu individuel, séquence des événements activés, replay des séances reçues et de trois archives officielles F1.
 - **Drapeaux** : neuf événements, activation individuelle et durée fixe ou jusqu’au suivant. Le bleu est désactivé par défaut.
