@@ -1,0 +1,2 @@
+# Keep source formatting and shell scripts identical on every checkout.
+* text=auto eol=lf
