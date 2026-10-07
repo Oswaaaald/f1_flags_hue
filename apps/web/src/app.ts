@@ -8,6 +8,7 @@ import { tests, scenarioOptions } from "./views/tests";
 import { flagSettings, preferences } from "./views/settings";
 
 let stopRequested = false;
+const pending = new WeakSet<HTMLElement>();
 let state: State;
 let inventory: Inventory | null = null;
 let scenarios: Scenario[] = [];
@@ -138,10 +139,47 @@ async function loadInventory() {
 }
 function renderInventory() {
   if (!inventory) return;
-  const locked =
-    state.runner.running || state.runner.cleanupPending ? " disabled" : "";
   $("#inventory").innerHTML =
-    `${locked ? '<div class="notice">Termine l’arrêt des lampes pour modifier cette sélection.</div>' : ""}<form data-form="selection"><h3 class="section-gap">Zones et pièces</h3>${inventory.groups.map((g) => `<label class="check"><input type="checkbox" data-group="${esc(g.id)}"${g.lightIds.length && g.lightIds.every((id) => state.settings.lightIds.includes(id)) ? " checked" : ""}${locked}>${esc(g.name)}<small>${g.lightIds.length} lampes</small></label>`).join("") || '<p class="help">Aucune zone sur ce pont.</p>'}<h3 class="section-gap">Lampes</h3>${inventory.lights.map((l) => `<label class="check"><input type="checkbox" name="lights" value="${esc(l.id)}"${state.settings.lightIds.includes(l.id) ? " checked" : ""}${!l.color ? " disabled" : locked}>${esc(l.name)}${!l.color ? "<small>Sans couleur</small>" : ""}</label>`).join("")}<p class="help section-gap">Les clignotements utilisent la pulsation native du pont. Les lampes sélectionnées pulsent ensemble, sans zone Entertainment à configurer.</p><div class="actions"><button class="button primary"${locked}>Enregistrer la sélection</button></div></form>`;
+    `<div class="notice" data-hue-lock-notice hidden>Termine l’arrêt des lampes pour modifier cette sélection.</div><form data-form="selection"><h3 class="section-gap">Zones et pièces</h3>${inventory.groups.map((g) => `<label class="check"><input type="checkbox" data-group="${esc(g.id)}"${g.lightIds.length && g.lightIds.every((id) => state.settings.lightIds.includes(id)) ? " checked" : ""}>${esc(g.name)}<small>${g.lightIds.length} lampes</small></label>`).join("") || '<p class="help">Aucune zone sur ce pont.</p>'}<h3 class="section-gap">Lampes</h3>${inventory.lights.map((l) => `<label class="check"><input type="checkbox" name="lights" value="${esc(l.id)}"${state.settings.lightIds.includes(l.id) ? " checked" : ""}${!l.color ? " data-unavailable disabled" : ""}>${esc(l.name)}${!l.color ? "<small>Sans couleur</small>" : ""}</label>`).join("")}<p class="help section-gap">Les clignotements utilisent la pulsation native du pont. Les lampes sélectionnées pulsent ensemble, sans zone Entertainment à configurer.</p><div class="actions"><button class="button primary">Enregistrer la sélection</button></div></form>`;
+  updateControls();
+}
+function updateControls() {
+  const locked =
+    stopRequested ||
+    state.initializing ||
+    state.runner.running ||
+    state.runner.stopping ||
+    state.runner.cleanupPending;
+  const disable = (el: HTMLElement, value: boolean) =>
+    el.toggleAttribute("disabled", value || pending.has(el));
+  disable($("#stop"), stopRequested || state.runner.stopping);
+  document
+    .querySelectorAll<HTMLElement>(
+      "[data-hue-controls] input, [data-hue-controls] button, [data-hue-controls] select",
+    )
+    .forEach((el) =>
+      disable(el, locked || el.hasAttribute("data-unavailable")),
+    );
+  document
+    .querySelectorAll<HTMLElement>("[data-hue-lock-notice]")
+    .forEach((el) => (el.hidden = !locked));
+  document
+    .querySelectorAll<HTMLButtonElement>('[data-action="start"]')
+    .forEach((b) => {
+      disable(
+        b,
+        locked || !state.hue.linked || state.settings.lightIds.length === 0,
+      );
+      b.textContent =
+        state.runner.running && state.runner.mode === "live"
+          ? "Direct activé"
+          : "Activer le direct";
+    });
+  document
+    .querySelectorAll<HTMLElement>(
+      '[data-action^="preview:"], [data-action="sequence"], [data-form="replay"] button',
+    )
+    .forEach((el) => disable(el, locked));
 }
 function update() {
   if (!state) return;
@@ -149,10 +187,7 @@ function update() {
     ? "Flux F1 connecté"
     : "Flux F1 hors ligne";
   $("#connection").className = "badge " + (state.feed.connected ? "good" : "");
-  $("#stop").toggleAttribute(
-    "disabled",
-    stopRequested || state.runner.stopping,
-  );
+  updateControls();
   $("#stop").textContent =
     stopRequested || state.runner.stopping
       ? "Arrêt en cours…"
@@ -200,19 +235,6 @@ function update() {
   document
     .querySelectorAll<HTMLElement>("[data-live]")
     .forEach((el) => (el.textContent = values[el.dataset.live ?? ""] ?? ""));
-  document
-    .querySelectorAll<HTMLButtonElement>('[data-action="start"]')
-    .forEach((b) => {
-      b.disabled =
-        state.runner.running ||
-        state.runner.cleanupPending ||
-        !state.hue.linked ||
-        state.settings.lightIds.length === 0;
-      b.textContent =
-        state.runner.running && state.runner.mode === "live"
-          ? "Direct activé"
-          : "Activer le direct";
-    });
   const error = document.querySelector<HTMLElement>("#runner-error");
   if (error) {
     error.hidden = !state.runner.error;
@@ -223,26 +245,6 @@ function update() {
   const journal = document.querySelector("#journal-list");
   if (journal && !($("#journal-session") as HTMLSelectElement).value)
     journal.innerHTML = logs(state.journal);
-  document
-    .querySelectorAll<HTMLButtonElement>(
-      '[data-action^="preview:"],[data-action="sequence"]',
-    )
-    .forEach(
-      (b) =>
-        (b.disabled =
-          state.initializing ||
-          state.runner.running ||
-          state.runner.cleanupPending),
-    );
-  document
-    .querySelectorAll<HTMLButtonElement>('[data-form="replay"] button')
-    .forEach(
-      (b) =>
-        (b.disabled =
-          state.initializing ||
-          state.runner.running ||
-          state.runner.cleanupPending),
-    );
   const themeSelect = document.querySelector<HTMLSelectElement>("#theme");
   if (themeSelect)
     themeSelect.value = localStorage.getItem("f1hue.theme") ?? "light";
@@ -425,10 +427,12 @@ document.addEventListener("click", (event) => {
   }
   if (element instanceof HTMLButtonElement && element.disabled) return;
   const previouslyDisabled = element.hasAttribute("disabled");
+  pending.add(element);
   element.setAttribute("disabled", "");
   void action(element.dataset.action!, element)
     .catch((e) => toast(e.message, true))
     .finally(() => {
+      pending.delete(element);
       if (!previouslyDisabled) element.removeAttribute("disabled");
       update();
     });
@@ -463,12 +467,18 @@ document.addEventListener("submit", (event) => {
   const form = event.target as HTMLFormElement;
   if (!form.dataset.form) return;
   event.preventDefault();
+  if (pending.has(form)) return;
   const data = new FormData(form);
   const kind = form.dataset.form;
   const submit = form.querySelector<HTMLButtonElement>(
     'button:not([type="button"])',
   );
-  if (submit) submit.disabled = true;
+  if (submit?.disabled) return;
+  pending.add(form);
+  if (submit) {
+    pending.add(submit);
+    submit.disabled = true;
+  }
   const work = async () => {
     if (kind === "login" || kind === "setup") {
       await api("/auth/" + kind, "POST", Object.fromEntries(data));
@@ -536,7 +546,12 @@ document.addEventListener("submit", (event) => {
   void work()
     .catch((e) => toast(e.message, true))
     .finally(() => {
-      if (submit) submit.disabled = false;
+      pending.delete(form);
+      if (submit) {
+        pending.delete(submit);
+        submit.disabled = false;
+      }
+      update();
     });
 });
 void showAuth().catch((e) => {

@@ -2,6 +2,16 @@
 
 Dernière vérification locale : 7 octobre 2026.
 
+## Preview.12 : déverrouiller les champs dès la fin de Stop
+
+Les champs Hue recevaient leur état désactivé au rendu de la page, mais les mises à jour du direct et de Stop ne le recalculaient pas. Une fonction commune actualise désormais les contrôles Hue, Direct et Tests à chaque état reçu. Le verrou reste actif pendant l’initialisation, le mode, l’arrêt et une restauration incomplète. Les requêtes en cours conservent leur propre verrou et les lampes sans couleur restent indisponibles.
+
+- TypeScript strict, esbuild, formatage et contrôle du paquet Mac ARM64 : réussis.
+- Service du paquet final : 22 contrôles HTTP réussis sur un pont simulé et un profil temporaire.
+- Firefox, application installée preview.12 : les champs de liaison, cases des zones et lampes et bouton d’enregistrement passent de désactivés à disponibles après Stop, sans navigation. Un second démarrage via l’API reverrouille la page par SSE ; Stop la déverrouille à nouveau. Une adresse et une case modifiées sans enregistrement sont conservées pendant ces mises à jour.
+- Les boutons des aperçus, de séquence et de replay sont disponibles après l’arrêt. Aucun aperçu n’a été déclenché sur les lampes réelles pendant cette vérification ; le direct attendait une séance terminée, sans drapeau actif.
+- Application remplacée dans Applications avec sauvegarde de la précédente. Réglages, mot de passe serveur et coffre Hue inchangés par comparaison d’empreintes. L’interface est laissée sur Hue, mode arrêté et sélection d’origine affichée.
+
 ## Preview.11 : conserver l’ambiance choisie pendant l’attente du direct
 
 Après les essais de preview.10, l’utilisateur a signalé que la lampe mauve de Galaxy était redevenue orange. Le diagnostic a confirmé que la scène Galaxy prévoit xy=(0,2745 ; 0,1326), tandis que la sauvegarde du mode contenait xy=(0,5954 ; 0,3774) pour cette lampe. La capture dès le lancement du direct pouvait restaurer un état antérieur à un changement effectué dans Hue pendant l’attente. La publication preview.10 a été annulée avec l’accord de l’utilisateur.
