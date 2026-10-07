@@ -1,6 +1,11 @@
 name: Build installers
 on:
   workflow_dispatch:
+    inputs:
+      publish_release:
+        description: Publier la release après validation des paquets
+        type: boolean
+        default: false
   push:
     tags: ['v*']
 permissions:
@@ -83,7 +88,7 @@ jobs:
           name: f1-hue-docker
           path: /tmp/f1-hue-image.tar
   release:
-    if: github.ref_type == 'tag'
+    if: github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && inputs.publish_release && github.ref_name == 'main')
     needs: [desktop, docker]
     runs-on: ubuntu-latest
     permissions:
@@ -98,11 +103,18 @@ jobs:
       - name: Check tag, calculate checksums and publish
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+          RELEASE_TARGET: ${{ github.sha }}
         run: |
+          args=()
+          if [ -z "$RELEASE_TAG" ]; then
+            RELEASE_TAG="$(node scripts/check-release-tag.mjs)"
+            args+=(--target "$RELEASE_TARGET")
+          else
+            args+=(--verify-tag)
+          fi
           node scripts/check-release-tag.mjs "$RELEASE_TAG"
           cd release
           sha256sum *.zip *.tar.gz *.exe *.tar > SHA256SUMS
-          args=()
           if [[ "$RELEASE_TAG" == *-* ]]; then args+=(--prerelease); fi
-          gh release create "$RELEASE_TAG" --verify-tag --title "F1 Hue Sync $RELEASE_TAG" --generate-notes "${args[@]}" ./*
+          gh release create "$RELEASE_TAG" --title "F1 Hue Sync $RELEASE_TAG" --generate-notes "${args[@]}" ./*

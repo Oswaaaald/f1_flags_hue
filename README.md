@@ -6,6 +6,8 @@ La version **2.0 preview** utilise C#/.NET 10, une interface TypeScript intégr�
 
 ## Utiliser l’application
 
+**[Télécharger l’application dans Releases](https://github.com/Oswaaaald/f1_flags_hue/releases)**, puis choisir le fichier correspondant à son système dans **Assets**.
+
 ### macOS
 
 macOS 15 ou ultérieur, conformément aux [systèmes pris en charge par .NET 10](https://github.com/dotnet/core/blob/main/release-notes/10.0/supported-os.md).
@@ -97,6 +99,6 @@ scripts/publish.sh linux-arm64    # service autonome Raspberry Pi 64 bits
 # Windows : deploy/windows/build.ps1 -Runtime win-x64
 ```
 
-Les workflows GitHub vérifient le moteur et les routes sur Mac, Windows et Linux. **Build installers** fabrique les six variantes, teste chaque service empaqueté sur son système et produit les installateurs Windows. Un lancement manuel conserve les artefacts ; un tag `vVERSION` correspondant à `Directory.Build.props` publie une release avec les sommes SHA-256 après validation de tous les jobs. Aucune signature payante n’est requise. Voir [la distribution](docs/releases.md).
+Les workflows GitHub vérifient le moteur et les routes sur Mac, Windows et Linux. **Build installers** fabrique les six variantes, teste chaque service empaqueté sur son système et produit les installateurs Windows. Un lancement manuel conserve les artefacts ; cocher **Publier la release après validation des paquets** depuis `main`, ou pousser un tag `vVERSION` correspondant à `Directory.Build.props`, publie une release avec les sommes SHA-256 après validation de tous les jobs. Aucune signature payante n’est requise. Voir [la distribution](docs/releases.md).
 
 Voir [l’architecture](docs/architecture.md), [l’hébergement](docs/hosting.md), [le rapport de vérification](docs/verification.md) et [l’ancienne documentation Python](docs/legacy-python.md).

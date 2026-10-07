@@ -4,6 +4,8 @@ Les paquets de bureau sont autonomes : les utilisateurs n’installent ni Python
 
 ## Installer
 
+Les fichiers sont disponibles dans les **Assets** de la [page Releases](https://github.com/Oswaaaald/f1_flags_hue/releases).
+
 - **Mac Apple Silicon** : `f1-hue-osx-arm64.zip`.
 - **Mac Intel** : `f1-hue-osx-x64.zip`.
 - **Windows x64 / ARM64** : installateur `F1Hue-VERSION-win-ARCH-Setup.exe`, ou ZIP portable contenant `F1Hue.exe` et son dossier `service`.
@@ -19,7 +21,7 @@ Sur Mac, déplacer le `.app` dans Applications. Si macOS bloque sa première ouv
 2. Lancer `scripts/build.sh`, les tests HTTP et la suite Python.
 3. Pousser le code dans le dépôt.
 4. Lancer **Actions → Build installers → Run workflow** pour obtenir les artefacts sans publier.
-5. Pour publier, créer et pousser un tag `vVERSION` correspondant au code. Le workflow vérifie les tests, construit les six cibles, exécute les contrôles HTTP sur les services empaquetés, puis crée la release et ses sommes de contrôle. Un échec bloque la publication.
+5. Pour publier depuis `main`, cocher **Publier la release après validation des paquets** avant de lancer ce workflow. Le tag `vVERSION` est calculé depuis `Directory.Build.props` et créé sur le commit testé. On peut aussi créer et pousser ce tag directement. Le workflow vérifie les tests, construit les six cibles, exécute les contrôles HTTP sur les services empaquetés, puis crée la release et ses sommes de contrôle. Un échec bloque la publication. Une version déjà publiée demande un nouveau numéro de version.
 
 Les versions contenant un suffixe comme `-preview.6` sont publiées comme préversions. Aucun secret Apple ou Windows n’est nécessaire au workflow standard. Les options de signature commerciale restent facultatives dans les scripts locaux.
 
