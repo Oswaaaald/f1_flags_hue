@@ -14,7 +14,7 @@ if($env:WINDOWS_SIGNING_THUMBPRINT){
 }
 $arch=if($Runtime -eq 'win-arm64'){'arm64'}else{'x64compatible'}
 $compiler="${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-if(!(Test-Path $compiler)){throw 'Inno Setup 6 est requis pour fabriquer l’installateur Windows.'}
+if(!(Test-Path $compiler)){throw "Inno Setup 6 est requis pour fabriquer l'installateur Windows."}
 $version=([xml](Get-Content Directory.Build.props)).Project.PropertyGroup.Version
 Run-Native $compiler @("/DBuildRoot=$((Resolve-Path $out).Path)","/DArch=$arch","/DAppVersion=$version","/DRuntime=$Runtime",'deploy/windows/installer.iss')
 if($env:WINDOWS_SIGNING_THUMBPRINT){Run-Native 'signtool' @('sign','/sha1',$env:WINDOWS_SIGNING_THUMBPRINT,'/fd','SHA256','/tr','https://timestamp.digicert.com','/td','SHA256',"artifacts/F1Hue-$version-$Runtime-Setup.exe")}
