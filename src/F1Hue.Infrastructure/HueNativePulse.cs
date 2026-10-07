@@ -18,10 +18,13 @@ public sealed class HueNativePulse(HueClient client, Store store, Action<Excepti
         _lights = lights.ToArray();
         // Save before sending: a cancelled response may still have reached the bridge.
         store.Put("pending_native_alert", _lights);
-        await WriteAsync(new { on = true, bri = settings.Brightness, xy = new[] { effect.X, effect.Y },
-            transitiontime = (int)Math.Round(settings.TransitionSeconds * 10), alert = "none" }, ct);
+        store.Put("pending_native_group", _target.Lease);
         var alert = flag == RaceFlag.BLUE ? "select" : "lselect";
-        await WriteAsync(new { alert }, ct);
+        // Set the flag color immediately, before the bridge's native breathing
+        // curve. Fading from a previous color during the first pulse gives
+        // intermediate colors. One group command starts every selected lamp.
+        await WriteAsync(new { on = true, bri = settings.Brightness, xy = new[] { effect.X, effect.Y },
+            transitiontime = 0, effect = "none", alert }, ct);
         _cancel = new CancellationTokenSource();
         // lselect expires on the bridge. Renew within its 15-second lease. Blue
         // used individual select pulses every 0.7 seconds in the Python version.
@@ -47,19 +50,41 @@ public sealed class HueNativePulse(HueClient client, Store store, Action<Excepti
         await _renewal.WaitAsync(ct); // No renewal may arrive after alert=none.
         _cancel?.Dispose(); _cancel = null;
         var pending = store.Get<string[]>("pending_native_alert") ?? [];
-        List<string> remaining = [.. pending]; List<Exception> errors = [];
-        foreach (var light in pending)
+        if (pending.Length == 0) { store.Delete("pending_native_group"); return; }
+        var lease = store.Get<HueGroupLease>("pending_native_group");
+        if (lease is not null && pending.ToHashSet().SetEquals(lease.Lights))
         {
             try
             {
-                // Cancel per saved lamp, even if the room was edited or removed.
-                await client.LegacyRequestAsync(HttpMethod.Put, "lights/" + light + "/state", new { alert = "none" }, ct);
-                remaining.Remove(light);
-                if (remaining.Count == 0) store.Delete("pending_native_alert");
-                else store.Put("pending_native_alert", remaining);
+                // Normal Stop is one synchronized command, including recovery
+                // after restarting. Membership is still checked before writing.
+                await HueGroupTarget.FromLease(client, lease).WriteAsync(new { alert = "none" }, ct);
+                store.Delete("pending_native_alert"); store.Delete("pending_native_group"); return;
             }
-            catch (Exception e) { errors.Add(e); }
-            if (pending.Length > 1 && !ct.IsCancellationRequested) await Task.Delay(100, ct);
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (InvalidOperationException) { /* Edited/deleted group: cancel only the saved lamps. */ }
+        }
+        List<string> remaining = [.. pending]; List<Exception> errors = [];
+        // Small selections are dispatched together. Larger recovery batches
+        // remain below Hue's recommended ten light commands per second.
+        var batches = pending.Chunk(10).ToArray();
+        for (var index = 0; index < batches.Length; index++)
+        {
+            var batch = batches[index];
+            var results = await Task.WhenAll(batch.Select(async light =>
+            {
+                try
+                {
+                    await client.LegacyRequestAsync(HttpMethod.Put, "lights/" + light + "/state", new { alert = "none" }, ct);
+                    return (Light: light, Error: (Exception?)null);
+                }
+                catch (Exception e) { return (Light: light, Error: e); }
+            }));
+            foreach (var result in results)
+                if (result.Error is null) remaining.Remove(result.Light); else errors.Add(result.Error);
+            if (remaining.Count == 0) { store.Delete("pending_native_alert"); store.Delete("pending_native_group"); }
+            else store.Put("pending_native_alert", remaining);
+            if (index < batches.Length - 1) await Task.Delay(1000, ct);
         }
         if (errors.Count > 0) throw new InvalidOperationException("Impossible d’arrêter la pulsation Hue : " + errors[0].Message);
     }

@@ -1,4 +1,5 @@
 using System.Net;
+using System.Collections.Concurrent;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -10,10 +11,13 @@ public sealed record HueLight(string Id, string Name, bool Color, string? Legacy
 public sealed record HueGroup(string Id, string Name, string Type, string[] LightIds, string? LegacyId);
 public sealed record HueArea(string Id, string Name, string[] LightIds, int[] Channels);
 public sealed record HueInventory(HueLight[] Lights, HueGroup[] Groups, HueArea[] Entertainment);
-public sealed class HueClient(IBridgeVault vault, Func<string, string?, Action<string>?, HttpClient>? clientFactory = null)
+public sealed class HueClient(IBridgeVault vault, Func<string, string?, Action<string>?, HttpClient>? clientFactory = null) : IDisposable
 {
     private HttpClient NewClient(string ip, string? pin, Action<string>? capture = null) => (clientFactory ?? Client)(ip, pin, capture);
     private readonly SemaphoreSlim _trust = new(1, 1);
+    // Reuse the HTTPS connection, like requests.Session in the Python engine.
+    // A changed address or certificate gets a separate pinned transport.
+    private readonly ConcurrentDictionary<(string Ip, string Pin), Lazy<HttpClient>> _clients = new();
     public object Status { get { var c = vault.Read(); return new { linked = c is not null, ip = c?.Ip, name = c?.Name, entertainment = c?.ClientKey is not null }; } }
     public static string LocalAddress(string ip)
     {
@@ -95,7 +99,7 @@ public sealed class HueClient(IBridgeVault vault, Func<string, string?, Action<s
     private async Task<JsonElement> SendAsync(HttpMethod method, string path, object? body, CancellationToken ct, bool legacy)
     {
         var c = await CredentialsAsync(ct);
-        using var client = NewClient(c.Ip, c.CertificatePin);
+        var client = _clients.GetOrAdd((c.Ip, c.CertificatePin!), key => new Lazy<HttpClient>(() => NewClient(key.Ip, key.Pin))).Value;
         using var request = new HttpRequestMessage(method, legacy ? "api/" + Uri.EscapeDataString(c.ApplicationKey) + "/" + path : "clip/v2/resource" + path);
         if (!legacy) request.Headers.Add("hue-application-key", c.ApplicationKey);
         if (body is not null) request.Content = JsonContent.Create(body, options: JsonDefaults.Options);
@@ -112,7 +116,8 @@ public sealed class HueClient(IBridgeVault vault, Func<string, string?, Action<s
                     HttpStatusCode.TooManyRequests => "Le pont reçoit trop de commandes. Patiente un instant puis réessaie.",
                     _ => "Le pont a renvoyé une erreur à cette commande."
                 };
-                throw new InvalidOperationException($"Commande Hue refusée (HTTP {(int)response.StatusCode}). {detail}");
+                var reason = await RejectionReasonAsync(response, c.ApplicationKey, ct);
+                throw new InvalidOperationException($"Commande Hue refusée (HTTP {(int)response.StatusCode}). {detail}" + (reason is null ? "" : " " + reason));
             }
             var data = await response.Content.ReadFromJsonAsync<JsonElement>(ct);
             if (legacy)
@@ -131,14 +136,35 @@ public sealed class HueClient(IBridgeVault vault, Func<string, string?, Action<s
                     throw new InvalidOperationException("Réponse Hue native invalide.");
                 return data.Clone();
             }
-            if (data.TryGetProperty("errors", out var errors) && errors.GetArrayLength() > 0) throw new InvalidOperationException("Commande Hue refusée : " + (errors[0].GetProperty("description").GetString() ?? "erreur du pont").Replace(c.ApplicationKey, "[clé masquée]", StringComparison.Ordinal));
-            return data.GetProperty("data").Clone();
+            if (data.ValueKind != JsonValueKind.Object || !data.TryGetProperty("errors", out var errors) || errors.ValueKind != JsonValueKind.Array
+                || !data.TryGetProperty("data", out var resources) || resources.ValueKind != JsonValueKind.Array)
+                throw new InvalidOperationException("Réponse Hue invalide.");
+            if (errors.GetArrayLength() > 0) throw new InvalidOperationException("Commande Hue refusée : " + (errors[0].GetProperty("description").GetString() ?? "erreur du pont").Replace(c.ApplicationKey, "[clé masquée]", StringComparison.Ordinal));
+            return resources.Clone();
         }
         catch (HttpRequestException e) when (e.HttpRequestError == HttpRequestError.SecureConnectionError)
         { throw new InvalidOperationException("La connexion HTTPS au pont Hue a échoué. Vérifie son certificat et la liaison du pont."); }
         catch (HttpRequestException)
         { throw new InvalidOperationException("Pont Hue inaccessible. Vérifie son adresse, le réseau local et l’autorisation Réseau local de F1 Hue Sync."); }
         catch (TaskCanceledException) when (!ct.IsCancellationRequested) { throw new InvalidOperationException("Le pont Hue ne répond pas. Vérifie la connexion au réseau local."); }
+        catch (JsonException) { throw new InvalidOperationException("Réponse Hue invalide."); }
+    }
+    private static async Task<string?> RejectionReasonAsync(HttpResponseMessage response, string key, CancellationToken ct)
+    {
+        try
+        {
+            var body = await response.Content.ReadFromJsonAsync<JsonElement>(ct);
+            if (body.ValueKind == JsonValueKind.Object && body.TryGetProperty("errors", out var errors)
+                && errors.ValueKind == JsonValueKind.Array && errors.GetArrayLength() > 0
+                && errors[0].TryGetProperty("description", out var description) && description.ValueKind == JsonValueKind.String)
+            {
+                var reason = description.GetString()!.Replace(key, "[clé masquée]", StringComparison.Ordinal)
+                    .Replace(Uri.EscapeDataString(key), "[clé masquée]", StringComparison.Ordinal);
+                return reason[..Math.Min(reason.Length, 240)];
+            }
+        }
+        catch (JsonException) { }
+        return null;
     }
     public Task PutLightAsync(string id, object state, CancellationToken ct) => Guid.TryParse(id, out _) ? RequestAsync(HttpMethod.Put, "/light/" + id, state, ct) : throw new ArgumentException("Lampe invalide.");
     public async Task<HueInventory> InventoryAsync(CancellationToken ct)
@@ -148,7 +174,9 @@ public sealed class HueClient(IBridgeVault vault, Func<string, string?, Action<s
         string? Legacy(JsonElement e) => e.TryGetProperty("id_v1", out var value) ? value.GetString() : null;
         var lights = all.Where(e => e.GetProperty("type").GetString() == "light").Select(e => new HueLight(e.GetProperty("id").GetString()!, Name(e), e.TryGetProperty("color", out _), Legacy(e))).ToArray();
         var devices = all.Where(e => e.GetProperty("type").GetString() == "device").ToDictionary(e => e.GetProperty("id").GetString()!, e => e.GetProperty("services").EnumerateArray().Where(s => s.GetProperty("rtype").GetString() == "light").Select(s => s.GetProperty("rid").GetString()!).ToArray());
-        var groups = all.Where(e => e.GetProperty("type").GetString() is "room" or "zone").Select(e => new HueGroup(e.GetProperty("id").GetString()!, Name(e), e.GetProperty("type").GetString()!, e.GetProperty("children").EnumerateArray().SelectMany(c => devices.GetValueOrDefault(c.GetProperty("rid").GetString()!, [])).Distinct().ToArray(), Legacy(e))).ToArray();
+        var groups = all.Where(e => e.GetProperty("type").GetString() is "room" or "zone").Select(e => new HueGroup(e.GetProperty("id").GetString()!, Name(e), e.GetProperty("type").GetString()!,
+            e.GetProperty("children").EnumerateArray().SelectMany(c => c.GetProperty("rtype").GetString() == "light"
+                ? new[] { c.GetProperty("rid").GetString()! } : devices.GetValueOrDefault(c.GetProperty("rid").GetString()!, [])).Distinct().ToArray(), Legacy(e))).ToArray();
         // Channels reference entertainment services. Map their owners back to the same light devices.
         var entertainmentDevices = all.Where(e => e.GetProperty("type").GetString() == "entertainment").ToDictionary(e => e.GetProperty("id").GetString()!, e => e.GetProperty("owner").GetProperty("rid").GetString()!);
         var areas = all.Where(e => e.GetProperty("type").GetString() == "entertainment_configuration").Select(e =>
@@ -166,5 +194,10 @@ public sealed class HueClient(IBridgeVault vault, Func<string, string?, Action<s
         if (result.Length == 0) throw new ArgumentException("Choisis au moins une lampe.");
         if (result.Any(id => !inventory.Lights.Any(l => l.Id == id && l.Color))) throw new ArgumentException("La sélection contient une lampe qui ne prend pas en charge la couleur.");
         return result;
+    }
+    public void Dispose()
+    {
+        foreach (var client in _clients.Values) if (client.IsValueCreated) client.Value.Dispose();
+        _trust.Dispose();
     }
 }

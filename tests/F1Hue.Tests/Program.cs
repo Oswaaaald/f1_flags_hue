@@ -268,6 +268,7 @@ try { await pairClient.PairAsync("192.168.1.20",CancellationToken.None); throw n
 catch (InvalidOperationException e) { Check(e.Message.Contains("bouton physique") && pairs.SequenceEqual(new string?[] { null,"new-pin" }), "Pairing requires physical button and pins before credential creation"); }
 await NativePulseTests.Run(Check);
 await GroupColorTests.Run(Check);
+await SnapshotTests.Run(Check);
 await RegressionTests.Run(Check);
 await DesktopAccessTests.Run(Check);
 Console.WriteLine($"\n{checks} checks passed.");

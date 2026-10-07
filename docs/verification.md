@@ -2,6 +2,22 @@
 
 Dernière vérification locale : 7 octobre 2026.
 
+## Preview.9 : pulsations et restauration groupées
+
+Le démarrage d’une pulsation applique la couleur et `alert=lselect` (ou `select` pour le bleu) dans une seule commande avec `transitiontime=0`, pour éviter un fondu depuis la couleur précédente pendant la première pulsation. Stop utilise une commande au groupe exact, également après un redémarrage. Si le groupe a changé, l’annulation reste limitée aux lampes mémorisées. Les requêtes réutilisent la connexion HTTPS avec le même certificat vérifié.
+
+Une scène v2 temporaire restaure ensemble les états individuels des lampes choisies, puis son nettoyage supprime les ressources appartenant au mode. La restauration n’est pas rejouée après la fin d’un effet fixe. Un groupe élargi, une scène modifiée, une réponse de création perdue et les erreurs de rappel sont couverts par les tests de récupération.
+
+- Compilation .NET : réussie sans avertissement ni erreur. TypeScript strict et esbuild : réussis.
+- 157 contrôles C# réussis, dont 18 nouveaux contrôles de restauration, zones et récupération. Les contrôles existants de pulsation, de couleur et de Stop ont été adaptés aux commandes groupées.
+- 20 contrôles HTTP et 17 contrôles de connexion automatique réussis sur des profils et ponts simulés.
+
+Ces tests vérifient les commandes envoyées et le traitement des réponses d’un pont simulé. Ils ne valident pas visuellement la pulsation sur les ampoules ni un écart physique nul sur le réseau Zigbee.
+
+Le pont réel a ensuite révélé deux contraintes qui manquaient au simulateur : une zone v2 contient des services `light`, et une action de scène ne peut combiner `effects.effect` avec couleur, température ou dégradé, même pour `no_effect`. Le format des zones, l’inventaire des zones et la normalisation des états sauvegardés ont été corrigés ; le simulateur refuse désormais ces combinaisons. Les anciennes restaurations en attente sont normalisées avant récupération.
+
+L’application dans Applications a été mise à jour et redémarrée. `/health` répond `ready: true` avec preview.9. La récupération des trois lampes s’est terminée ; les aperçus SC et GREEN ont ensuite été lancés sur le pont réel et arrêtés sans erreur ni marqueur de récupération restant. La restauration est acceptée par le pont, les réglages sont identiques et le direct a été relancé dans son mode initial. Ces essais ne constituent pas une observation visuelle du rendu physique.
+
 ## Preview.8 : changements de couleur groupés
 
 Les couleurs fixes de plusieurs lampes sont envoyées par une seule commande au groupe Hue contenant exactement la sélection. La boucle de commandes individuelles et sa pause de 100 ms ont été supprimées. Le groupe est réutilisé ou créé sans modifier une pièce existante ; sa composition est vérifiée avant chaque commande. Le même adaptateur est utilisé par le direct, les aperçus, la séquence et le replay.

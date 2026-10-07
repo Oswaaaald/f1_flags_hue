@@ -69,5 +69,6 @@ public interface IEffectOutput
     Task EndAnimationAsync(CancellationToken cancellationToken);
     Task RestoreAsync(CancellationToken cancellationToken);
     Task ForgetAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    Task ReleaseAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 }
 public interface IEffectFailureSource { event Action<Exception>? Failed; }

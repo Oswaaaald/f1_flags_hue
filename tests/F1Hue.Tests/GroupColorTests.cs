@@ -41,9 +41,10 @@ internal static class GroupColorTests
                 "A cached color group widened outside the app is rejected before sending a color");
             bridge.GroupChanged = false;
             bridge.Calls.Clear(); await output.RestoreAsync(CancellationToken.None);
-            check(bridge.Calls.Select(c => c.Path).ToHashSet().SetEquals(["clip/v2/resource/light/" + A, "clip/v2/resource/light/" + B])
+            check(bridge.Calls.Count(c => c.Method == HttpMethod.Put && c.Path.StartsWith("clip/v2/resource/scene/")) == 1
+                && !bridge.Calls.Any(c => c.Path.StartsWith("clip/v2/resource/light/"))
                 && store.Get<Dictionary<string, JsonElement>>("pending_restore") is null,
-                "Grouped colors still restore only the individually captured selected lamps");
+                "One scene recall restores only the captured selected lamps together");
 
             output = new HueOutput(bridge.Client(), store);
             await output.CaptureAsync(settings, CancellationToken.None);
@@ -71,7 +72,7 @@ internal static class GroupColorTests
                 await engine.PlayAsync(RaceFlag.GREEN, shortGreen);
                 await engine.Completion.WaitAsync(TimeSpan.FromSeconds(2));
                 check(engine.Active is null && bridge.Calls.Count(c => c.Method == HttpMethod.Put && c.Path == "groups/7/action") == 1
-                    && bridge.Calls.Count(c => c.Method == HttpMethod.Put && c.Path.StartsWith("clip/v2/resource/light/")) == 2
+                    && bridge.Calls.Count(c => c.Method == HttpMethod.Put && c.Path.StartsWith("clip/v2/resource/scene/")) == 1
                     && store.Get<Dictionary<string, JsonElement>>("pending_restore") is null,
                     "A fixed green duration follows one grouped color command with restoration of the chosen baseline");
             }
@@ -91,6 +92,7 @@ internal static class GroupColorTests
     {
         public readonly List<(HttpMethod Method, string Path, string Body)> Calls = [];
         public bool HasExactGroup = true, GroupChanged, RejectColor, OmitLegacy;
+        private readonly SceneBridge Scenes = new();
         public HueClient Client() => new(new MemoryVault(), (_, pin, _) =>
         {
             if (pin != "test-pin") throw new Exception("Grouped colors must retain certificate pinning");
@@ -102,12 +104,11 @@ internal static class GroupColorTests
             var body = request.Content is null ? "" : await request.Content.ReadAsStringAsync(ct);
             Calls.Add((request.Method, path, body));
             string response;
-            if (path == "clip/v2/resource/light")
+            if (path.StartsWith("clip/"))
             {
                 var lights = new[] { Light(A, "1"), Light(B, "2"), Light("33333333-3333-3333-3333-333333333333", "3") };
-                response = JsonSerializer.Serialize(new { errors = Array.Empty<object>(), data = lights });
+                response = Scenes.Reply(path, request.Method, body, lights);
             }
-            else if (path.StartsWith("clip/")) response = "{\"errors\":[],\"data\":[]}";
             else if (path == "groups" && request.Method == HttpMethod.Get)
                 response = HasExactGroup ? "{\"0\":{\"lights\":[\"1\",\"2\"]},\"8\":{\"lights\":[\"1\",\"2\",\"3\"]},\"7\":{\"lights\":[\"1\",\"2\"]}}"
                     : "{\"0\":{\"lights\":[\"1\",\"2\"]},\"8\":{\"lights\":[\"1\",\"2\",\"3\"]}}";
@@ -117,7 +118,7 @@ internal static class GroupColorTests
             else response = "[{\"success\":{\"state\":true}}]";
             return new(HttpStatusCode.OK) { Content = new StringContent(response, System.Text.Encoding.UTF8, "application/json") };
         }
-        private object Light(string id, string legacy) => new { id, id_v1 = OmitLegacy ? null : "/lights/" + legacy,
+        private object Light(string id, string legacy) => new { id, type = "light", owner = new { rid = SceneBridge.Device(id), rtype = "device" }, id_v1 = OmitLegacy ? null : "/lights/" + legacy,
             on = new { on = true }, dimming = new { brightness = 42 }, color = new { xy = new { x = .3, y = .4 } } };
     }
     private sealed class Handler(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> send) : HttpMessageHandler

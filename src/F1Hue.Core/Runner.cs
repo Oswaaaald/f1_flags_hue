@@ -105,7 +105,9 @@ public sealed class Runner(ISettingsStore store, ILiveFeed feed, IEffectOutput o
         Set(State with { Stopping = true });
         try
         {
-            await _engine.StopAsync(store.Read().RestoreOnExit);
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(25));
+            await _engine.StopAsync(store.Read().RestoreOnExit, deadline.Token);
+            await output.ReleaseAsync(deadline.Token);
             Set(State with { Running = false, Stopping = false, CleanupPending = false, ActiveEffect = null,
                 Error = State.CleanupPending ? null : State.Error });
         }

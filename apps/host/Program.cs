@@ -42,7 +42,7 @@ if (args.Contains("--reset-password")) { auth.Reset(); Console.WriteLine("Accès
 if (Option("--import") is string legacy) Console.WriteLine(LegacyImport.Import(legacy, store, vault) ? "Configuration existante importée." : "Configuration déjà présente : import ignoré.");
 var simulate = args.Contains("--simulate");
 var feed = new F1Feed(store);
-var hue = new HueClient(vault);
+using var hue = new HueClient(vault);
 if (args.Contains("--check-hue"))
 {
     using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
@@ -217,7 +217,8 @@ async Task Startup()
         if (output is HueOutput real)
             try
             {
-                var pendingRecovery = store.Get<JsonElement?>("pending_restore") is not null || store.Get<string>("pending_entertainment") is not null || store.Get<string[]>("pending_native_alert") is not null;
+                var pendingRecovery = store.Get<JsonElement?>("pending_restore") is not null || store.Get<string>("pending_entertainment") is not null || store.Get<string[]>("pending_native_alert") is not null
+                    || store.Get<JsonElement?>("hue_snapshot") is not null;
                 await real.RecoverAsync(recoveryDeadline.Token);
                 if (pendingRecovery) Console.WriteLine("Hue : récupération des lampes terminée après l’arrêt incomplet.");
             }

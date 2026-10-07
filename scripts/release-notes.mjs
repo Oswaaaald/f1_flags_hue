@@ -27,6 +27,8 @@ Tes réglages et ta liaison Hue sont conservés lors d’une mise à jour.
 
 Les couleurs des drapeaux sont envoyées en une seule commande au groupe exact des lampes choisies, avec le fondu configuré. L’application n’ajoute plus de pause entre chaque lampe pour ces changements de couleur.
 
+Les clignotements SC, VSC et damier utilisent la pulsation native du pont, comme dans l’ancienne version Python. La couleur est appliquée immédiatement au démarrage, sans fondu depuis la couleur précédente. Stop arrête le groupe ensemble, et une scène Hue v2 restaure les états individuels en un seul rappel. La connexion HTTPS au pont est réutilisée pour réduire les délais entre commandes.
+
 Les applications Mac et Windows te connectent automatiquement à l’interface, sans mot de passe à créer. Utilise leur menu **Ouvrir F1 Hue Sync** pour te reconnecter. Les installations réseau, Linux et Docker gardent la connexion par mot de passe.
 
 Sur Mac, le trousseau peut demander séparément l’accès à **F1Hue.Vault**, qui protège la liaison à ton pont Hue.

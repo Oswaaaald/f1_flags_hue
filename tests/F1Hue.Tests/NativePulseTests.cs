@@ -25,15 +25,18 @@ static class NativePulseTests
                 check(bridge.Calls.Where(c => c.Body.Contains("lselect")).All(c => c.Path == "groups/7/action")
                     && !bridge.Calls.Any(c => c.Path.Contains("entertainment") || c.Body.Contains("signaling")),
                     "Native SC uses Python's lselect on the exact group, without Entertainment or v2 signaling");
-                check(bridge.Calls.Any(c => c.Path == "groups/7/action" && c.Body.Contains("transitiontime") && c.Body.Contains("xy")),
-                    "Native pulse applies the selected color and brightness to the synchronized group");
+                var start = bridge.Calls.First(c => c.Body.Contains("lselect"));
+                var payload = JsonSerializer.Deserialize<JsonElement>(start.Body);
+                check(payload.GetProperty("transitiontime").GetInt32() == 0 && payload.GetProperty("effect").GetString() == "none"
+                    && payload.GetProperty("xy")[0].GetDouble() == settings.Effects[RaceFlag.SC].X,
+                    "Native SC sets yellow, clears colorloop and starts the pulse in one command without intermediate color fades");
                 await engine.PlayAsync(RaceFlag.RED, settings);
                 var calls = bridge.Calls.ToArray();
                 var red = Array.FindIndex(calls, c => c.Path == "groups/7/action" && c.Body.Contains("xy")
                     && JsonSerializer.Deserialize<JsonElement>(c.Body).GetProperty("xy")[0].GetDouble() == settings.Effects[RaceFlag.RED].X);
-                check(red >= 0 && calls.Take(red).Any(c => c.Path == "lights/1/state" && c.Body.Contains("none"))
-                    && calls.Take(red).Any(c => c.Path == "lights/2/state" && c.Body.Contains("none")),
-                    "Changing to red cancels the native pulse on each chosen lamp before changing color");
+                check(red >= 0 && calls.Take(red).Count(c => c.Method == HttpMethod.Put && c.Path == "groups/7/action"
+                        && c.Body == "{\"alert\":\"none\"}") == 1 && !calls.Any(c => c.Path.StartsWith("lights/")),
+                    "Changing to red cancels the native pulse in one group command before changing color");
                 var count = bridge.Count("lselect"); await Task.Delay(160);
                 check(bridge.Count("lselect") == count, "No old SC renewal can overwrite the next flag");
                 await engine.StopAsync(true);
@@ -63,6 +66,15 @@ static class NativePulseTests
                     "Restart retries only the pending native cancellation before restoring saved lamps");
             }
             bridge.GroupChanged = false;
+
+            await output.CaptureAsync(settings, CancellationToken.None);
+            await output.ApplyAsync(RaceFlag.SC, settings.Effects[RaceFlag.SC], settings, CancellationToken.None);
+            bridge.Calls.Clear();
+            await new HueOutput(client, store).RecoverAsync(CancellationToken.None);
+            check(bridge.Calls.Count(c => c.Method == HttpMethod.Put && c.Path == "groups/7/action" && c.Body == "{\"alert\":\"none\"}") == 1
+                && !bridge.Calls.Any(c => c.Path.StartsWith("lights/")) && store.Get<JsonElement?>("pending_native_group") is null,
+                "Restart uses the persisted exact group to stop all lamps in one command before restoring");
+            await output.EndAnimationAsync(CancellationToken.None); // Dispose the original process's simulated renewal.
 
             bridge.Calls.Clear(); bridge.BlockRenewal = true;
             var pulse = new HueNativePulse(client, store, time: new FastClock());
@@ -120,7 +132,7 @@ static class NativePulseTests
                 await engine.PlayAsync(RaceFlag.CHEQUERED, rules);
                 await engine.Completion.WaitAsync(TimeSpan.FromSeconds(2));
                 check(engine.Active is null && store.Get<string[]>("pending_native_alert") is null
-                    && bridge.Calls.Last().Body.Contains("42"), "Fixed native pulse duration cancels the pulse and restores the baseline");
+                    && bridge.Calls.Last().Path.StartsWith("clip/v2/resource/scene/"), "Fixed native pulse duration cancels the pulse and recalls the baseline together");
                 await engine.PlayAsync(RaceFlag.SC, settings);
                 await engine.PlayAsync(RaceFlag.BLUE, settings); // Disabled by default.
                 check(engine.Active is null && store.Get<string[]>("pending_native_alert") is null
@@ -164,6 +176,7 @@ static class NativePulseTests
     {
         public readonly ConcurrentQueue<(HttpMethod Method, string Path, string Body)> Calls = new();
         public bool HasExactGroup = true, GroupChanged, FailStopOnce, BlockRenewal, RejectPulse;
+        private readonly SceneBridge Scenes = new();
         public readonly TaskCompletionSource RenewalEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public readonly TaskCompletionSource ReleaseRenewal = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public int Count(string alert) => Calls.Count(c => c.Body.Contains("\"alert\":\"" + alert + "\""));
@@ -179,7 +192,7 @@ static class NativePulseTests
             Calls.Enqueue((request.Method, path, body));
             string response;
             if (path.StartsWith("clip/"))
-                response = request.Method == HttpMethod.Get ? JsonSerializer.Serialize(new { errors = Array.Empty<object>(), data = new[] { Light(A, "/lights/1"), Light(B, "/lights/2"), Light(Guid.NewGuid().ToString(), "/lights/3") } }) : "{\"errors\":[],\"data\":[]}";
+                response = Scenes.Reply(path, request.Method, body, [Light(A, "/lights/1"), Light(B, "/lights/2"), Light(Guid.NewGuid().ToString(), "/lights/3")]);
             else if (path == "groups" && request.Method == HttpMethod.Get)
                 response = HasExactGroup ? "{\"0\":{\"lights\":[\"1\",\"2\"]},\"8\":{\"lights\":[\"1\",\"2\",\"3\"]},\"7\":{\"lights\":[\"1\",\"2\"]}}" : "{\"0\":{\"lights\":[\"1\",\"2\"]},\"8\":{\"lights\":[\"1\",\"2\",\"3\"]}}";
             else if (path == "groups" && request.Method == HttpMethod.Post) { HasExactGroup = true; response = "[{\"success\":{\"id\":\"7\"}}]"; }
@@ -192,7 +205,7 @@ static class NativePulseTests
             { RenewalEntered.TrySetResult(); await ReleaseRenewal.Task; } // Bridge applied it; reply ignores cancellation.
             return new(HttpStatusCode.OK) { Content = new StringContent(response, System.Text.Encoding.UTF8, "application/json") };
         }
-        private static object Light(string id, string legacy) => new { id, id_v1 = legacy, on = new { on = true }, dimming = new { brightness = 42 }, color = new { xy = new { x = .3, y = .4 } } };
+        private static object Light(string id, string legacy) => new { id, type = "light", owner = new { rid = SceneBridge.Device(id), rtype = "device" }, id_v1 = legacy, on = new { on = true }, dimming = new { brightness = 42 }, color = new { xy = new { x = .3, y = .4 } } };
     }
     private sealed class Handler(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> send) : HttpMessageHandler
     {

@@ -2,10 +2,22 @@ using System.Text.Json;
 
 namespace F1Hue.Infrastructure;
 
+internal sealed record HueGroupLease(string[] Lights, string? Group);
+
 // One bridge command addresses the whole selection. Never use group 0 or a
 // room containing other lamps, and verify membership before every group write.
 internal sealed class HueGroupTarget(HueClient client, string[] lights, string? group)
 {
+    public HueGroupLease Lease => new(lights.ToArray(), group);
+    public static HueGroupTarget FromLease(HueClient client, HueGroupLease lease)
+    {
+        foreach (var light in lease.Lights) LightId("/lights/" + light);
+        if (lease.Lights.Length == 0 || lease.Lights.Distinct().Count() != lease.Lights.Length
+            || lease.Group is null && lease.Lights.Length != 1
+            || lease.Group is not null && !System.Text.RegularExpressions.Regex.IsMatch(lease.Group, @"\A[1-9][0-9]*\z"))
+            throw new InvalidOperationException("Cible Hue sauvegardée invalide.");
+        return new(client, lease.Lights.ToArray(), lease.Group);
+    }
     public static string LightId(string? legacyPath)
         => legacyPath is not null && System.Text.RegularExpressions.Regex.IsMatch(legacyPath, @"\A/lights/[1-9][0-9]*\z")
             ? legacyPath[8..] : throw new InvalidOperationException("Cette lampe ne prend pas en charge la synchronisation native Hue.");
