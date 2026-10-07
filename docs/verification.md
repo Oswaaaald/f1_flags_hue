@@ -13,6 +13,10 @@ Les couleurs fixes de plusieurs lampes sont envoyées par une seule commande au 
 
 Les tests utilisent un pont simulé et contrôlent les requêtes effectivement envoyées. Ils ne mesurent pas le décalage physique entre les ampoules ni le temps de propagation Zigbee. La restauration conserve les états individuels des lampes choisies.
 
+Les workflows du commit `50857b3` ont terminé avec succès le 7 octobre 2026 : [Verify sur main](https://github.com/Oswaaaald/f1_flags_hue/actions/runs/37667579465), [Verify sur le tag](https://github.com/Oswaaaald/f1_flags_hue/actions/runs/37667579590) et [Build installers](https://github.com/Oswaaaald/f1_flags_hue/actions/runs/37667580006). Les six paquets natifs et l’image Docker sont construits ; la [release preview.8](https://github.com/Oswaaaald/f1_flags_hue/releases/tag/v2.0.0-preview.8) contient les dix fichiers attendus, tous téléversés.
+
+L’application preview.8 a remplacé celle d’Applications puis a redémarré : `/health` indique la version attendue et `ready: true`. Les empreintes des réglages, du mot de passe serveur et de `bridge.enc` sont identiques avant et après la mise à jour. L’ancienne application est conservée en sauvegarde temporaire.
+
 ## Preview.7 : connexion automatique des applications de bureau
 
 Les applications Mac et Windows utilisent maintenant une preuve privée du lanceur pour ouvrir une session locale. Aucun mot de passe n’est demandé dans leur interface. Les installations serveur, Linux et Docker conservent l’authentification par mot de passe. Le coffre Hue et un éventuel ancien mot de passe serveur restent conservés.
