@@ -45,9 +45,31 @@ internal static class SnapshotTests
             check(bridge.Scenes.Resources.Count == 0 && store.Get<JsonElement?>("hue_snapshot") is null,
                 "Stop deletes only its temporary scene and zone and leaves no repeated-test resource accumulation");
 
+            await output.CaptureAsync(settings, CancellationToken.None); bridge.Calls.Clear();
+            bridge.Scenes.MissNextRecall = true;
+            await output.RestoreAsync(CancellationToken.None);
+            var recalls = bridge.Calls.Where(c => c.Method == HttpMethod.Put && c.Path.StartsWith("clip/v2/resource/scene/")).ToArray();
+            check(recalls.Length == 2 && recalls.Select(c => c.Path).Distinct().Count() == 1
+                && !bridge.Calls.Any(c => c.Method == HttpMethod.Put && c.Path.StartsWith("clip/v2/resource/light/")),
+                "A successful recall that leaves one lamp orange is detected and retried with the same synchronized scene");
+            check(bridge.Calls.Last().Method == HttpMethod.Get && bridge.Calls.Last().Path == "clip/v2/resource/light"
+                && bridge.Scenes.Resources.Count == 2 && store.Get<JsonElement?>("pending_restore") is null,
+                "Scene and zone remain alive until two settled light-state reads confirm restoration");
+            await output.ReleaseAsync(CancellationToken.None);
+
+            await output.CaptureAsync(settings, CancellationToken.None); bridge.Scenes.MissAllRecalls = true;
+            var rejected = false;
+            try { await output.RestoreAsync(CancellationToken.None); } catch (InvalidOperationException e) { rejected = e.Message.Contains("pas confirmée"); }
+            check(rejected && store.Get<JsonElement?>("pending_restore") is not null && bridge.Scenes.Resources.Count == 2,
+                "An unconfirmed lamp never reports Stop success or loses its original state and scene");
+            bridge.Scenes.MissAllRecalls = false;
+            await new HueOutput(client, store).RecoverAsync(CancellationToken.None);
+            check(bridge.Scenes.Resources.Count == 0 && store.Get<JsonElement?>("pending_restore") is null,
+                "Retry after a partially applied recall confirms every selected lamp before releasing the recovery resources");
+
             await output.CaptureAsync(settings, CancellationToken.None);
             bridge.Scenes.RejectRecall = true;
-            var rejected = false;
+            rejected = false;
             try { await output.RestoreAsync(CancellationToken.None); } catch (InvalidOperationException) { rejected = true; }
             check(rejected && store.Get<JsonElement?>("pending_restore") is not null && store.Get<JsonElement?>("hue_snapshot") is not null,
                 "A failed scene recall preserves the original baseline and recovery lease");

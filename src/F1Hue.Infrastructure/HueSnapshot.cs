@@ -8,7 +8,7 @@ internal sealed record HueSnapshotLease(string Tag, string[] Lights, Dictionary<
 
 // Scene actions preserve each lamp's own state, and one recall applies them
 // together. Only resources created with this persisted lease may be removed.
-internal sealed class HueSnapshot(HueClient client, Store store)
+internal sealed class HueSnapshot(HueClient client, Store store, TimeProvider? time = null)
 {
     public const string Key = "hue_snapshot";
     private static JsonElement[] Items(JsonElement data) => data.ValueKind == JsonValueKind.Array
@@ -99,8 +99,45 @@ internal sealed class HueSnapshot(HueClient client, Store store)
     {
         var lease = store.Get<HueSnapshotLease>(Key) ?? throw new InvalidOperationException("Scène de restauration Hue manquante.");
         if (lease.Scene is null || lease.Zone is null) throw new InvalidOperationException("La préparation de la restauration Hue est incomplète.");
-        await ValidateAsync(lease, baseline, ct);
-        await client.RequestAsync(HttpMethod.Put, "/scene/" + lease.Scene, new { recall = new { action = "active", duration = 400 } }, ct);
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            await ValidateAsync(lease, baseline, ct);
+            await client.RequestAsync(HttpMethod.Put, "/scene/" + lease.Scene, new { recall = new { action = "active", duration = 400 } }, ct);
+            // A successful HTTP response queues the Zigbee recall. Keep both
+            // the scene and its group alive through the fade and any last pulse.
+            await Task.Delay(TimeSpan.FromMilliseconds(650), time ?? TimeProvider.System, ct);
+            if (!await ConfirmedAsync(baseline, ct)) continue;
+            await Task.Delay(TimeSpan.FromMilliseconds(250), time ?? TimeProvider.System, ct);
+            if (await ConfirmedAsync(baseline, ct)) return;
+        }
+        throw new InvalidOperationException("La restauration d’une lampe n’est pas confirmée par le pont. L’état initial est conservé : réessaie Stop.");
+    }
+
+    public async Task<bool> ConfirmedAsync(Dictionary<string, JsonElement> baseline, CancellationToken ct)
+    {
+        var lights = Items(await client.RequestAsync(HttpMethod.Get, "/light", null, ct)).ToDictionary(Id);
+        return baseline.All(item => lights.TryGetValue(item.Key, out var light) && RestoredState(light, item.Value));
+    }
+    private static bool RestoredState(JsonElement light, JsonElement wanted)
+    {
+        var actual = HueOutput.Baseline(light);
+        if (!actual.GetProperty("on").GetProperty("on").GetBoolean())
+            return !wanted.GetProperty("on").GetProperty("on").GetBoolean();
+        return SameState(actual, wanted);
+    }
+    private static bool SameState(JsonElement actual, JsonElement wanted, string property = "")
+    {
+        if (actual.ValueKind != wanted.ValueKind) return false;
+        return wanted.ValueKind switch
+        {
+            JsonValueKind.Object => wanted.EnumerateObject().All(p => actual.TryGetProperty(p.Name, out var value) && SameState(value, p.Value, p.Name)),
+            JsonValueKind.Array => actual.GetArrayLength() == wanted.GetArrayLength()
+                && actual.EnumerateArray().Zip(wanted.EnumerateArray()).All(p => SameState(p.First, p.Second)),
+            // Brightness and xy are quantized by the lamp/bridge. Tolerances
+            // cover that quantization, not a visibly different flag color.
+            JsonValueKind.Number => Math.Abs(actual.GetDouble() - wanted.GetDouble()) <= (property == "brightness" ? 1 : property == "mirek" ? 1 : .002),
+            _ => actual.GetRawText() == wanted.GetRawText(),
+        };
     }
 
     public async Task ReleaseAsync(CancellationToken ct)

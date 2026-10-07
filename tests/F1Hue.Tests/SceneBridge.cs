@@ -7,10 +7,19 @@ internal sealed class SceneBridge
 {
     public readonly Dictionary<string, JsonObject> Resources = [];
     public bool RejectRecall, LoseSceneResponse, Offline;
+    public bool MissNextRecall, MissAllRecalls;
+    private string? _unrestored;
     public static string Device(string light) => "a" + light[1..];
     public string Reply(string path, HttpMethod method, string body, object[] lights)
     {
         var lightNodes = JsonSerializer.SerializeToNode(lights)!.AsArray();
+        if (_unrestored is not null)
+        {
+            var light = lightNodes.Single(l => l!["id"]!.GetValue<string>() == _unrestored)!.AsObject();
+            light["on"] = new JsonObject { ["on"] = true };
+            light["color"] = new JsonObject { ["xy"] = new JsonObject { ["x"] = .545, ["y"] = .455 } };
+            light.Remove("gradient"); light.Remove("effects"); light.Remove("color_temperature");
+        }
         var all = lightNodes.Select(l => l!.DeepClone()).Concat(lightNodes.Select(l => JsonSerializer.SerializeToNode(new
         {
             id = Device(l!["id"]!.GetValue<string>()), type = "device",
@@ -45,6 +54,12 @@ internal sealed class SceneBridge
         }
         if (method == HttpMethod.Put && route.StartsWith("/scene/") && RejectRecall)
             return "{\"errors\":[{\"description\":\"recall unavailable\"}],\"data\":[]}";
+        if (method == HttpMethod.Put && route.StartsWith("/scene/"))
+        {
+            _unrestored = MissNextRecall || MissAllRecalls
+                ? Resources[route.Split('/')[2]]["actions"]!.AsArray().Last()!["target"]!["rid"]!.GetValue<string>() : null;
+            MissNextRecall = false;
+        }
         if (method == HttpMethod.Delete) Resources.Remove(route.Split('/')[2]);
         return "{\"errors\":[],\"data\":[]}";
     }

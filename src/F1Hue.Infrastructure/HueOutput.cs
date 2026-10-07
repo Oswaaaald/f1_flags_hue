@@ -9,7 +9,7 @@ public sealed class HueOutput(HueClient client, Store store, TimeProvider? time 
     private Dictionary<string, JsonElement> _baseline = [];
     private HueNativePulse? _pulse;
     private HueGroupTarget? _solidTarget;
-    private readonly HueSnapshot _snapshot = new(client, store);
+    private readonly HueSnapshot _snapshot = new(client, store, time);
     private bool _restored;
     private string?[] _legacyLights = [];
     public async Task CaptureAsync(AppSettings settings, CancellationToken ct)

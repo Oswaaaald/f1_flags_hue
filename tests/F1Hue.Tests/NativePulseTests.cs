@@ -132,7 +132,7 @@ static class NativePulseTests
                 await engine.PlayAsync(RaceFlag.CHEQUERED, rules);
                 await engine.Completion.WaitAsync(TimeSpan.FromSeconds(2));
                 check(engine.Active is null && store.Get<string[]>("pending_native_alert") is null
-                    && bridge.Calls.Last().Path.StartsWith("clip/v2/resource/scene/"), "Fixed native pulse duration cancels the pulse and recalls the baseline together");
+                    && bridge.Calls.Last(c => c.Method == HttpMethod.Put).Path.StartsWith("clip/v2/resource/scene/"), "Fixed native pulse duration cancels the pulse and recalls the baseline together");
                 await engine.PlayAsync(RaceFlag.SC, settings);
                 await engine.PlayAsync(RaceFlag.BLUE, settings); // Disabled by default.
                 check(engine.Active is null && store.Get<string[]>("pending_native_alert") is null

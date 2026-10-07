@@ -110,6 +110,19 @@ try
         await engine.StopAsync(false); Check(effectOutput.Restores == 1, "Restoration preference is respected on explicit stop");
     }
     effectOutput = new FakeOutput();
+    foreach (var stopping in new[] { false, true })
+    {
+        var confirming = new PendingConfirmationOutput();
+        await using var engine = new EffectEngine(confirming);
+        var shortFlag = settings with { Effects = new(settings.Effects) { [RaceFlag.GREEN] = settings.Effects[RaceFlag.GREEN] with { DurationSeconds = .1 } } };
+        await engine.PlayAsync(RaceFlag.GREEN, shortFlag);
+        await confirming.Entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        if (stopping) await engine.StopAsync(false).WaitAsync(TimeSpan.FromSeconds(1));
+        else await engine.PlayAsync(RaceFlag.RED, settings).WaitAsync(TimeSpan.FromSeconds(1));
+        Check(confirming.Cancelled && engine.Active == (stopping ? null : RaceFlag.RED), stopping
+            ? "Stop cancels an expired flag's pending restoration confirmation before acquiring the effect gate"
+            : "A newer flag preempts restoration confirmation without waiting for stale retries or clearing the new effect");
+    }
     await using (var engine = new EffectEngine(effectOutput))
     {
         await engine.PlayAsync(RaceFlag.RED, settings); effectOutput.FailEnd = true;
@@ -280,6 +293,20 @@ sealed class FakeOutput : IEffectOutput
     public Task ApplyAsync(RaceFlag flag, EffectSpec e, AppSettings s, CancellationToken ct) { Colors.Enqueue(flag); return Task.CompletedTask; }
     public Task EndAnimationAsync(CancellationToken ct) => FailEnd ? throw new InvalidOperationException("fake bridge offline") : Task.CompletedTask;
     public Task RestoreAsync(CancellationToken ct) { Interlocked.Increment(ref Restores); return Task.CompletedTask; }
+}
+sealed class PendingConfirmationOutput : IEffectOutput
+{
+    public readonly TaskCompletionSource Entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public bool Cancelled;
+    public Task CaptureAsync(AppSettings s, CancellationToken ct) => Task.CompletedTask;
+    public Task ApplyAsync(RaceFlag flag, EffectSpec e, AppSettings s, CancellationToken ct) => Task.CompletedTask;
+    public Task EndAnimationAsync(CancellationToken ct) => Task.CompletedTask;
+    public async Task RestoreAsync(CancellationToken ct)
+    {
+        Entered.TrySetResult();
+        try { await Task.Delay(Timeout.Infinite, ct); }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { Cancelled = true; throw; }
+    }
 }
 sealed class FakeFeed : ILiveFeed
 {

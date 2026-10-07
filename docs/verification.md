@@ -2,6 +2,18 @@
 
 Dernière vérification locale : 7 octobre 2026.
 
+## Preview.10 : confirmation de la restauration après Stop
+
+Le rendu natif de la preview.9 a été confirmé visuellement par l’utilisateur, mais celui-ci a observé un arrêt pendant une pulsation laissant une lampe orange malgré un Stop annoncé terminé. Le rappel était considéré comme terminé dès son succès HTTP et ses ressources temporaires étaient immédiatement supprimées.
+
+La restauration garde désormais la scène et la zone pendant le fondu, relit les états des lampes à deux reprises et retente le même rappel groupé si nécessaire. Un résultat non confirmé conserve la sauvegarde et affiche un arrêt incomplet. La vérification du minuteur précédent peut être annulée par Stop ou un nouvel événement.
+
+- Compilation .NET, TypeScript strict et esbuild : réussis.
+- 163 contrôles C# réussis. Six nouvelles reproductions couvrent un rappel accepté laissant une lampe orange, sa seconde tentative groupée, la conservation des ressources pendant confirmation, l’échec persistant et sa récupération, ainsi que la préemption par Stop et par le drapeau suivant.
+- Bundle Mac final : 20 contrôles HTTP et 17 contrôles d’authentification de bureau réussis ; version et absence de données privées vérifiées.
+- Application installée dans Applications : quatre arrêts du Safety Car, à 0,12 / 0,4 / 0,8 / 1,3 seconde après son démarrage effectif, ont confirmé les états des trois lampes sans erreur. Stop a terminé en 1,40 à 2,26 secondes, contrôles compris. Il s’agit de confirmations du pont ; aucune observation visuelle des lampes n’a été faite par l’agent.
+- Réglages, mot de passe conservé et liaison Hue chiffrée inchangés ; direct rétabli après les essais. L’interface affiche la preview.10, le direct actif et l’ambiance initiale.
+
 ## Preview.9 : pulsations et restauration groupées
 
 Le démarrage d’une pulsation applique la couleur et `alert=lselect` (ou `select` pour le bleu) dans une seule commande avec `transitiontime=0`, pour éviter un fondu depuis la couleur précédente pendant la première pulsation. Stop utilise une commande au groupe exact, également après un redémarrage. Si le groupe a changé, l’annulation reste limitée aux lampes mémorisées. Les requêtes réutilisent la connexion HTTPS avec le même certificat vérifié.
