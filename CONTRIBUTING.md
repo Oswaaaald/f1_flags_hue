@@ -46,6 +46,6 @@ Exécuter `scripts/dotnet.sh format whitespace F1Hue.slnx --no-restore` et `npm 
 
 ## Qualification avant publication
 
-**Verify** bloque les erreurs de moteur, API, frontend, navigateurs et conteneur. **Build installers** fabrique les six paquets, exécute les services natifs et les essais d’installation disponibles, puis contrôle le SBOM avant toute publication. Le mode manuel sans case de publication permet de qualifier les artefacts.
+**Verify** bloque les erreurs de moteur, API, frontend, navigateurs et conteneur. **Build installers** fabrique les six paquets, exécute les services natifs et les essais d’installation disponibles, puis contrôle le SBOM avant toute publication. Le mode manuel sans case de publication, ou une branche `release/nom`, permet de qualifier les artefacts. Les constructions et tests indépendants se déroulent en parallèle ; la publication exige leur réussite à tous.
 
 Compléter ces vérifications par une séance F1 réelle et une matrice matérielle : une lampe et plusieurs lampes, Galaxy statique, Stop pendant une pulsation, lampe absente, redémarrage du pont, perte réseau et veille/réveil. Vérifier macOS Réseau local/Trousseau, Windows SmartScreen/DPAPI, clavier mobile et lecteur d’écran. La CI ne mesure ni le délai optique ni la propagation Zigbee. Voir [les résultats et limites](docs/audit-corrections-2026-10-08.md).

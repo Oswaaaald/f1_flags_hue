@@ -40,16 +40,24 @@ Ce suivi concerne le code de la preview.14. Le [rapport initial](audit-2026-10-0
 - 27 contrôles API, 17 contrôles d’authentification bureau, 14 contrôles HTTP d’audit et 77 tests Python réussis.
 - TypeScript, contrats générés, compilation du lanceur Windows et vérification de types du lanceur Swift réussis.
 - Runtime local : .NET 10.0.12, SQLite 3.53.3, ARM64.
+- Paquet Mac autonome reconstruit avec un cache NuGet vide et signature locale vérifiée. La restauration des dépendances demande explicitement les runtimes autonomes sur les six cibles ; elle reste verrouillée.
+- Connexion réelle au flux officiel F1 depuis le paquet final réussie le 8 octobre. Le snapshot reçu concernait une séance terminée ; cet essai ne valide pas la réception d’un nouveau drapeau pendant une séance en cours.
 
 ## Vérifications dans GitHub Actions et le navigateur
 
-Le [workflow Verify du commit 0614380](https://github.com/Oswaaaald/f1_flags_hue/actions/runs/37810758021) est réussi sur macOS, Windows et Linux. Il comprend les 18 parcours Chromium/Firefox/WebKit, les vérifications d’accessibilité à 320 px, les transactions de l’installateur Linux, l’exécution réelle du conteneur Docker et les scans des dépendances et du conteneur. Une dernière vérification de débordement avec texte agrandi et la qualification des six paquets sont ajoutées ensuite.
+La [qualification complète du commit 5a3a4b3](https://github.com/Oswaaaald/f1_flags_hue/actions/runs/37814623828) est réussie : vérifications macOS/Windows/Linux, six paquets natifs, image Docker multiarchitecture et inventaire de sécurité. Cette branche de qualification ne publie aucune release.
+
+- Les 18 parcours Chromium/Firefox/WebKit passent, avec Axe, affichage à 320 px et absence de débordement des préférences avec texte agrandi à 200 %. Le test renforcé a permis de corriger une différence de largeur de grille dans Firefox/WebKit.
+- Chaque service empaqueté x64/ARM64 passe les 27 contrôles API, les 17 contrôles d’authentification bureau et les 14 contrôles HTTP d’audit.
+- Les deux applications Mac sont réellement lancées puis quittées pendant un effet simulé avec une connexion SSE ouverte.
+- Les deux installateurs Windows sont installés, mis à jour et désinstallés. Le tray démarre son service et le profil utilisateur est conservé après désinstallation.
+- Les deux paquets Linux sont installés puis mis à jour avec un vrai service utilisateur systemd ; les données et le drop-in sont conservés. Les échecs de transaction sont également testés avec un gestionnaire simulé.
+- Le conteneur fonctionne effectivement sans root, avec système de fichiers en lecture seule et volume persistant ; arrêt et redémarrage conservent ses réglages.
+- Le scan de secrets dans l’historique, les audits NuGet/npm/Python, le scan du conteneur et celui de l’inventaire des six paquets passent. Cela reflète les bases de vulnérabilités à la date du contrôle, sans garantie pour les vulnérabilités inconnues ou publiées ensuite.
 
 Contrôle manuel dans Chrome sur ordinateur : sélection de zone partielle, résumé d’une seule lampe, sauvegarde, verrouillage pendant un Safety Car simulé, puis déverrouillage dans la même vue après Stop. Les cartes de préférences et de sauvegarde sont lisibles ; aucune erreur JavaScript n’est apparue pendant ce parcours. Le mobile est couvert par les navigateurs automatisés, sans contrôle manuel sur téléphone. Tous ces essais utilisent des profils temporaires sans pont réel.
 
 ## Qualification restante et limites
-
-Les scripts natifs doivent être exécutés sur leur système cible avant de déclarer les paquets qualifiés.
 
 Une installation propre sur une machine utilisateur, les dialogues Gatekeeper/SmartScreen/Trousseau, Windows fermeture de session, veille/réveil, Safari iOS/Chrome Android et lecteur d’écran restent des essais manuels. Le test Windows lance réellement le tray et arrête son service via son marqueur privé ; il ne clique pas le menu natif. Les simulations ne prouvent pas la simultanéité physique Zigbee. Aucun test de cette passe n’a modifié l’ambiance du pont de l’utilisateur.
 
