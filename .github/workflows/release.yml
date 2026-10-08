@@ -7,6 +7,7 @@ on:
         type: boolean
         default: false
   push:
+    branches: ['release/**']
     tags: ['v*']
 permissions:
   contents: read
@@ -100,14 +101,9 @@ jobs:
         with:
           name: f1-hue-docker
           path: /tmp/f1-hue-image.tar
-  release:
-    if: github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && inputs.publish_release && github.ref_name == 'main')
+  inventory:
     needs: [desktop, docker]
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      id-token: write
-      attestations: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -132,6 +128,28 @@ jobs:
           severity-cutoff: high
           output-format: json
           output-file: release/vulnerability-report.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: f1-hue-inventory
+          path: |
+            release/f1-hue-release.spdx.json
+            release/vulnerability-report.json
+          if-no-files-found: error
+  release:
+    if: github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && inputs.publish_release && github.ref_name == 'main')
+    needs: [desktop, docker, inventory]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: f1-hue-*
+          path: release
+          merge-multiple: true
       - uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
         with:
           subject-path: release/*

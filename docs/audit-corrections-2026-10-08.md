@@ -41,9 +41,15 @@ Ce suivi concerne le code de la preview.14. Le [rapport initial](audit-2026-10-0
 - TypeScript, contrats générés, compilation du lanceur Windows et vérification de types du lanceur Swift réussis.
 - Runtime local : .NET 10.0.12, SQLite 3.53.3, ARM64.
 
+## Vérifications dans GitHub Actions et le navigateur
+
+Le [workflow Verify du commit 0614380](https://github.com/Oswaaaald/f1_flags_hue/actions/runs/37810758021) est réussi sur macOS, Windows et Linux. Il comprend les 18 parcours Chromium/Firefox/WebKit, les vérifications d’accessibilité à 320 px, les transactions de l’installateur Linux, l’exécution réelle du conteneur Docker et les scans des dépendances et du conteneur. Une dernière vérification de débordement avec texte agrandi et la qualification des six paquets sont ajoutées ensuite.
+
+Contrôle manuel dans Chrome sur ordinateur : sélection de zone partielle, résumé d’une seule lampe, sauvegarde, verrouillage pendant un Safety Car simulé, puis déverrouillage dans la même vue après Stop. Les cartes de préférences et de sauvegarde sont lisibles ; aucune erreur JavaScript n’est apparue pendant ce parcours. Le mobile est couvert par les navigateurs automatisés, sans contrôle manuel sur téléphone. Tous ces essais utilisent des profils temporaires sans pont réel.
+
 ## Qualification restante et limites
 
-Les scripts CI ajoutés doivent être exécutés sur leur système cible avant de déclarer les paquets qualifiés. La session graphique locale était indisponible pendant cette passe ; aucun résultat visuel manuel supplémentaire n’est revendiqué. Les tests navigateur automatisés utilisent des profils temporaires sans pont réel.
+Les scripts natifs doivent être exécutés sur leur système cible avant de déclarer les paquets qualifiés.
 
 Une installation propre sur une machine utilisateur, les dialogues Gatekeeper/SmartScreen/Trousseau, Windows fermeture de session, veille/réveil, Safari iOS/Chrome Android et lecteur d’écran restent des essais manuels. Le test Windows lance réellement le tray et arrête son service via son marqueur privé ; il ne clique pas le menu natif. Les simulations ne prouvent pas la simultanéité physique Zigbee. Aucun test de cette passe n’a modifié l’ambiance du pont de l’utilisateur.
 

@@ -87,6 +87,10 @@ test("Every view stays accessible at 320px and with enlarged text", async ({ pag
   await page.addStyleTag({ url: service.url + "/test-text-zoom.css" });
   await expect(page.locator("#stop")).toBeInViewport();
   await page.screenshot({ path: info.outputPath("preferences-320px-large-text.png"), fullPage: true });
+  const overflow = await page.evaluate(() => [...document.querySelectorAll<HTMLElement>("body *")]
+    .filter(el => el.getBoundingClientRect().right > innerWidth + 1)
+    .map(el => `${el.tagName}.${el.className}: ${el.textContent?.trim().slice(0, 60)}`));
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), overflow.join("\n")).toBeTruthy();
 });
 
 test("Leaving a view cancels its read and does not produce stale DOM errors", async ({ page, service }) => {

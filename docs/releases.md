@@ -20,7 +20,7 @@ Sur Mac, déplacer le `.app` dans Applications. Si macOS bloque sa première ouv
 1. Mettre à jour `Directory.Build.props`, le numéro de build Mac et les métadonnées npm.
 2. Suivre les vérifications de `CONTRIBUTING.md`, puis qualifier les artefacts sur les systèmes cibles.
 3. Pousser le code dans le dépôt.
-4. Lancer **Actions → Build installers → Run workflow** pour obtenir les artefacts sans publier.
+4. Lancer **Actions → Build installers → Run workflow**, ou pousser une branche `release/nom`, pour obtenir les artefacts sans publier. Les six paquets et leur inventaire de sécurité sont vérifiés avant toute création de release.
 5. Pour publier depuis `main`, cocher **Publier la release après validation des paquets** avant de lancer ce workflow. Le tag `vVERSION` est calculé depuis `Directory.Build.props` et créé sur le commit testé. On peut aussi créer et pousser ce tag directement. Le workflow vérifie les tests, construit les six cibles, exécute les contrôles HTTP sur les services empaquetés, puis crée la release et ses sommes de contrôle. Un échec bloque la publication. Une version déjà publiée demande un nouveau numéro de version.
 
 Les versions contenant un suffixe comme `-preview.14` sont publiées comme préversions. Aucun secret Apple ou Windows n’est nécessaire au workflow standard. Les options de signature commerciale restent facultatives dans les scripts locaux.

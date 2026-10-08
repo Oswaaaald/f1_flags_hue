@@ -2,6 +2,8 @@
 
 Ces sondes documentent les comportements de la preview.13. Elles utilisent uniquement des profils SQLite temporaires et un transport Hue simulé. Elles ne lisent pas le coffre de l’utilisateur et ne commandent pas ses lampes.
 
+Exécuter ces reproductions sur la preview.13 : les nouveaux garde-fous peuvent interrompre volontairement ces anciennes sondes. Les tests de non-régression actuels sont intégrés à `tests/`, et le [suivi des correctifs](../../audit-corrections-2026-10-08.md) décrit leurs résultats.
+
 Les observations sont dans [evidence.json](evidence.json). Le [rapport](../../audit-2026-10-07.md) précise les impacts, limites et corrections recommandées. Ces programmes impriment des observations : ce ne sont pas encore des tests de non-régression intégrés à la CI.
 
 Depuis la racine du dépôt, avec le SDK .NET 10 et les dépendances du projet installés :

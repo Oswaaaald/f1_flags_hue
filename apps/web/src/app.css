@@ -1023,6 +1023,9 @@
     .topbar {
       flex-wrap: wrap;
       gap: 6px;
+      height: auto;
+      min-height: 62px;
+      padding-block: 8px;
     }
     .topbar > #breadcrumb {
       flex-basis: 100%;
@@ -1045,6 +1048,18 @@
       min-width: 0;
       font-size: 11px;
       padding-inline: 4px;
+      white-space: normal;
+      overflow-wrap: anywhere;
+      text-align: center;
+    }
+    .button {
+      max-width: 100%;
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+    .toggle > span {
+      min-width: 0;
+      overflow-wrap: anywhere;
     }
     .tabs {
       flex-wrap: wrap;
