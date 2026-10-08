@@ -60,7 +60,7 @@ test("Calibration, history, journal and replay work from the keyboard", async ({
   await service.post(page, "/hue/select", { lightIds: ["11111111-1111-1111-1111-111111111111"], groupIds: [] });
   await page.getByRole("link", { name: "Tests", exact: true }).click();
   await page.locator('[name="scenario"]').selectOption("local:123");
-  await page.locator('[data-form="replay"] button').click();
+  await page.getByRole("button", { name: "Lancer le replay", exact: true }).click();
   await expect(page.locator("#toast")).toContainText("Replay lancé");
   await page.locator("#stop").click();
 });
@@ -78,7 +78,13 @@ test("Every view stays accessible at 320px and with enlarged text", async ({ pag
   }
   await page.getByRole("combobox", { name: /^Thème/ }).selectOption("dark");
   expect((await new AxeBuilder({ page }).withTags(["wcag2aa"]).analyze()).violations).toEqual([]);
-  await page.addStyleTag({ content: "html { font-size: 28px !important; }" });
+  const zoomCss = await page.evaluate(() => {
+    const elements = [...document.querySelectorAll<HTMLElement>("body, body *")];
+    const sizes = elements.map(el => parseFloat(getComputedStyle(el).fontSize) * 2);
+    return elements.map((el, i) => { el.dataset.textZoom = String(i); return `[data-text-zoom="${i}"] { font-size: ${sizes[i]}px !important; }`; }).join("\n");
+  });
+  await page.route("**/test-text-zoom.css", route => route.fulfill({ contentType: "text/css", body: zoomCss }));
+  await page.addStyleTag({ url: service.url + "/test-text-zoom.css" });
   await expect(page.locator("#stop")).toBeInViewport();
   await page.screenshot({ path: info.outputPath("preferences-320px-large-text.png"), fullPage: true });
 });

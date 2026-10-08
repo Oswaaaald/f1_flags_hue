@@ -25,21 +25,19 @@ Ouvre le fichier téléchargé et suis les étapes de l’installation.
 
 Tes réglages et ta liaison Hue sont conservés lors d’une mise à jour.
 
-Dans **Direct → Calibration TV**, ajuste le décalage avec les boutons **±0,1 / 0,5 / 1 / 5 secondes**. Chaque clic est enregistré et s’applique aux prochains événements reçus, sans arrêter le direct. La saisie manuelle et les outils de mesure restent disponibles.
+## Ce qui change
 
-Après Stop, les champs Hue et les boutons de lancement redeviennent disponibles dès la fin de l’arrêt, sans changer d’onglet. Les modifications non enregistrées du formulaire sont conservées.
+- Stop et fermeture de l’application réactifs, restauration des lampes confirmée et parcours de récupération en cas de pont ou lampe indisponible.
+- Direct automatique qui reprend quand le réseau revient, fraîcheur des données F1 visible, journal et diagnostic plus précis.
+- Sélection Hue cohérente, brouillons conservés, conflits entre onglets détectés, luminosité en pourcentage et navigation mobile/clavier améliorée.
+- Sauvegardes et migrations protégées, hébergement HTTPS derrière un proxy explicite, installation Linux avec retour arrière.
+- Dépendances verrouillées, tests sur plusieurs systèmes et navigateurs, inventaire des composants et attestations de provenance.
 
-Les couleurs des drapeaux sont envoyées en une seule commande au groupe exact des lampes choisies, avec le fondu configuré. L’application n’ajoute plus de pause entre chaque lampe pour ces changements de couleur.
+La calibration fine **±0,1 / 0,5 / 1 / 5 secondes** reste disponible. Les pulsations natives SC/VSC/damier sont conservées, avec annulation groupée et restauration Hue v2. Arrête une scène Hue dynamique avant de lancer la synchronisation : sa progression ne peut pas être restaurée fidèlement. Couleurs fixes, températures et gradients compatibles restent pris en charge.
 
-Les clignotements SC, VSC et damier utilisent la pulsation native du pont, comme dans l’ancienne version Python. La couleur est appliquée immédiatement au démarrage, sans fondu depuis la couleur précédente. Stop arrête le groupe ensemble, et une scène Hue v2 restaure les états individuels en un seul rappel. La connexion HTTPS au pont est réutilisée pour réduire les délais entre commandes.
+Les applications Mac et Windows ouvrent une session automatiquement ; Linux et Docker utilisent un mot de passe. Sur Mac, le trousseau peut demander séparément l’accès à **F1Hue.Vault** après la mise à jour.
 
-Stop attend maintenant la confirmation des états des lampes avant de terminer. Une lampe restée sur la couleur du drapeau déclenche une nouvelle tentative groupée ; un échec conserve l’état initial et propose de réessayer l’arrêt.
-
-L’ambiance est mémorisée juste avant le premier drapeau, puis à nouveau après un retour au repos. Une scène choisie dans Hue pendant l’attente du direct est conservée. Stop sans drapeau joué ne change plus les couleurs.
-
-Les applications Mac et Windows te connectent automatiquement à l’interface, sans mot de passe à créer. Utilise leur menu **Ouvrir F1 Hue Sync** pour te reconnecter. Les installations réseau, Linux et Docker gardent la connexion par mot de passe.
-
-Sur Mac, le trousseau peut demander séparément l’accès à **F1Hue.Vault**, qui protège la liaison à ton pont Hue.
+[Changements détaillés](https://github.com/${repository}/blob/${tag}/CHANGELOG.md) · [Correctifs et limites de vérification](https://github.com/${repository}/blob/${tag}/docs/audit-corrections-2026-10-08.md)
 
 <details>
 <summary>Autres appareils et installation avancée</summary>
@@ -58,5 +56,5 @@ ${download("SHA256SUMS", "SHA256SUMS")} permet de vérifier les fichiers téléc
 
 </details>
 
-[Guide d’installation](https://github.com/${repository}/blob/${tag}/README.md#utiliser-lapplication) · [Historique des changements](https://github.com/${repository}/commits/${tag})
+[Guide d’installation](https://github.com/${repository}/blob/${tag}/README.md#utiliser-lapplication) · [Historique des changements](https://github.com/${repository}/blob/${tag}/CHANGELOG.md)
 `);

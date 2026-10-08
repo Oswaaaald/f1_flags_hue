@@ -43,7 +43,7 @@ Le script Unix produit les ZIP portables Windows. Les installateurs `.exe` sont 
 
 ## Provenance et inventaire
 
-La publication contient `f1-hue-release.spdx.json` (SBOM des paquets extraits), `vulnerability-report.json`, les versions du runtime/SQLite de chaque architecture et `SHA256SUMS`. Le scan bloque les vulnérabilités élevées connues avec correctif selon sa base au moment de la construction. Le conteneur exécuté en CI est scanné séparément. Un audit hebdomadaire continue les contrôles même sans nouveau commit.
+La publication contient `f1-hue-release.spdx.json` (SBOM des paquets extraits), `vulnerability-report.json`, les versions du runtime/SQLite de chaque architecture et `SHA256SUMS`. Le scan bloque les vulnérabilités élevées connues selon sa base au moment de la construction. Le conteneur exécuté en CI est scanné séparément. Un audit hebdomadaire continue les contrôles même sans nouveau commit.
 
 Avec le CLI GitHub, après téléchargement d’un paquet :
 
