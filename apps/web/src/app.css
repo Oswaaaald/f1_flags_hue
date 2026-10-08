@@ -859,10 +859,12 @@
     }
     .grid,
     .grid.three {
-      grid-template-columns: 1fr;
+      grid-template-columns: minmax(0, 1fr);
     }
     .card {
       padding: 21px;
+      min-width: 0;
+      overflow-wrap: anywhere;
     }
     .live-hero {
       padding: 25px;
@@ -917,6 +919,7 @@
     }
     footer {
       padding-inline: 20px;
+      flex-wrap: wrap;
     }
     #toast {
       left: 50%;
