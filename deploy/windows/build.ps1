@@ -7,9 +7,9 @@ Run-Native 'npm' @('run','build','--prefix','apps/web')
 Run-Native 'node' @('scripts/check-web-build.mjs')
 $out="artifacts/$Runtime/desktop"
 if(Test-Path $out){Remove-Item $out -Recurse -Force}
-Run-Native 'dotnet' @('restore','apps/host',"-p:RuntimeIdentifier=$Runtime",'--locked-mode')
+Run-Native 'dotnet' @('restore','apps/host',"-p:RuntimeIdentifier=$Runtime",'-p:SelfContained=true','--locked-mode')
 Run-Native 'dotnet' @('publish','apps/host','--no-restore','-c','Release','-r',$Runtime,'--self-contained','true','-o',"$out/service")
-Run-Native 'dotnet' @('restore','deploy/windows/F1Hue.Desktop.csproj',"-p:RuntimeIdentifier=$Runtime",'--locked-mode')
+Run-Native 'dotnet' @('restore','deploy/windows/F1Hue.Desktop.csproj',"-p:RuntimeIdentifier=$Runtime",'-p:SelfContained=true','--locked-mode')
 Run-Native 'dotnet' @('publish','deploy/windows/F1Hue.Desktop.csproj','--no-restore','-c','Release','-r',$Runtime,'--self-contained','true','-o',$out)
 if($env:F1_HUE_RELEASES_URL){Set-Content "$out/releases-url.txt" $env:F1_HUE_RELEASES_URL}
 if($env:WINDOWS_SIGNING_THUMBPRINT){

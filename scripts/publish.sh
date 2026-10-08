@@ -8,7 +8,7 @@ node scripts/check-web-build.mjs
 mkdir -p "artifacts/$target"
 staging=$(mktemp -d "artifacts/$target/.publish.XXXXXX")
 trap 'rm -rf "$staging"' EXIT
-scripts/dotnet.sh restore apps/host/F1Hue.Host.csproj -p:RuntimeIdentifier="$target" --locked-mode
+scripts/dotnet.sh restore apps/host/F1Hue.Host.csproj -p:RuntimeIdentifier="$target" -p:SelfContained=true --locked-mode
 scripts/dotnet.sh publish apps/host/F1Hue.Host.csproj --no-restore -c Release -r "$target" --self-contained true -o "$staging/service" -p:UseSharedCompilation=false -m:1
 rm -rf "artifacts/$target/service"
 mv "$staging/service" "artifacts/$target/service"
@@ -18,7 +18,7 @@ elif [ "$target" = linux-x64 ] || [ "$target" = linux-arm64 ]; then
   cp deploy/linux/install.sh deploy/linux/uninstall.sh "artifacts/$target/"
   tar -czf "artifacts/f1-hue-$target.tar.gz" -C "artifacts/$target" service install.sh uninstall.sh
 else
-  scripts/dotnet.sh restore deploy/windows/F1Hue.Desktop.csproj -p:RuntimeIdentifier="$target" --locked-mode
+  scripts/dotnet.sh restore deploy/windows/F1Hue.Desktop.csproj -p:RuntimeIdentifier="$target" -p:SelfContained=true --locked-mode
   scripts/dotnet.sh publish deploy/windows/F1Hue.Desktop.csproj --no-restore -c Release -r "$target" --self-contained true -o "$staging/desktop" -p:UseSharedCompilation=false -m:1
   cp -R "artifacts/$target/service" "$staging/desktop/service"
   if [ -n "${F1_HUE_RELEASES_URL:-}" ]; then printf '%s\n' "$F1_HUE_RELEASES_URL" > "$staging/desktop/releases-url.txt"; fi

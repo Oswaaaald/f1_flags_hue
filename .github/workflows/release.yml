@@ -15,7 +15,6 @@ jobs:
   verify:
     uses: ./.github/workflows/verify.yml
   desktop:
-    needs: verify
     strategy:
       fail-fast: false
       matrix:
@@ -84,7 +83,6 @@ jobs:
             artifacts/*.runtime.json
           if-no-files-found: error
   docker:
-    needs: verify
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -137,7 +135,7 @@ jobs:
           if-no-files-found: error
   release:
     if: github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && inputs.publish_release && github.ref_name == 'main')
-    needs: [desktop, docker, inventory]
+    needs: [verify, desktop, docker, inventory]
     runs-on: ubuntu-latest
     permissions:
       contents: write
