@@ -1,4 +1,4 @@
-using System.Diagnostics;
+using System.Collections.Concurrent;
 using System.Net;
 using System.Text.Json;
 using F1Hue.Core;
@@ -13,7 +13,8 @@ internal static class HueRecoveryAuditTests
         {
             using var store = new Store(directory);
             var groups = new Dictionary<string, JsonElement>();
-            var writes = new List<(long At, string Alert)>();
+            var budgetClock = new BudgetClock();
+            var writes = new ConcurrentQueue<(long At, string Alert)>();
             var deleted = new List<string>();
             var lostCreation = false;
             var next = 40;
@@ -40,7 +41,7 @@ internal static class HueRecoveryAuditTests
                 else
                 {
                     var data = JsonSerializer.Deserialize<JsonElement>(request.Content!.ReadAsStringAsync().GetAwaiter().GetResult());
-                    writes.Add((Stopwatch.GetTimestamp(), data.GetProperty("alert").GetString()!));
+                    writes.Enqueue((budgetClock.GetTimestamp(), data.GetProperty("alert").GetString()!));
                     body = "[{\"success\":true}]";
                 }
                 return new(HttpStatusCode.OK)
@@ -50,20 +51,26 @@ internal static class HueRecoveryAuditTests
             }))
             {
                 BaseAddress = new Uri("https://192.168.1.20/")
-            });
+            }, budgetClock);
             var settings = new AppSettings();
             foreach (var lights in new[] { new[] { "1", "2" }, new[] { "2", "3" } })
             {
                 var pulse = new HueNativePulse(client, store, time: new FastClock());
                 writes.Clear();
+                budgetClock.Advance(TimeSpan.FromSeconds(1));
                 await pulse.StartAsync(lights, RaceFlag.BLUE, settings.Effects[RaceFlag.BLUE], settings, CancellationToken.None);
-                for (var i = 0; writes.Count < 2 && i < 200; i++)
-                    await Task.Delay(10);
-                check(writes.Count >= 2 && Stopwatch.GetElapsedTime(writes[0].At, writes[1].At).TotalMilliseconds >= 990,
+                await WaitUntil(() => budgetClock.Pending == 1);
+                budgetClock.Advance(TimeSpan.FromMilliseconds(999));
+                var withheld = writes.Count == 1;
+                budgetClock.Advance(TimeSpan.FromMilliseconds(1));
+                await WaitUntil(() => writes.Count == 2 && budgetClock.Pending == 1);
+                var sent = writes.ToArray();
+                check(withheld && budgetClock.GetElapsedTime(sent[0].At, sent[1].At) == TimeSpan.FromSeconds(1),
                     "Native group pulses share a one-command-per-second budget");
-                var stopping = Stopwatch.GetTimestamp();
-                await pulse.StopAsync(CancellationToken.None);
-                check(Stopwatch.GetElapsedTime(stopping).TotalMilliseconds < 300 && writes.Last().Alert == "none",
+                // The next renewal is now blocked on a timer that will never
+                // advance. Stop must cancel it and bypass the budget entirely.
+                await pulse.StopAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5));
+                check(budgetClock.Pending == 0 && writes.Count == 3 && writes.Last().Alert == "none",
                     "Stop cancels waiting renewal and bypasses the ordinary group budget");
                 await new HueOutput(client, store).ReleaseAsync(CancellationToken.None);
                 check(groups.Count == 0 && store.Get<JsonElement?>("hue_owned_group") is null, "Changing selections leaves no application-owned fallback group behind");
@@ -128,6 +135,59 @@ internal static class HueRecoveryAuditTests
                 "Partial recovery keeps a private archive of the complete original ambiance");
         }
         finally { Directory.Delete(directory, true); }
+    }
+    private static async Task WaitUntil(Func<bool> ready)
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (!ready())
+            await Task.Delay(10, deadline.Token);
+    }
+    // Only the command budget uses this clock. Advancing it is explicit, so a
+    // slow filesystem or a busy CI machine cannot satisfy or fail the ordering.
+    private sealed class BudgetClock : TimeProvider
+    {
+        private long _ticks;
+        private readonly ConcurrentQueue<BudgetTimer> _timers = new();
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+        public override long GetTimestamp() => Interlocked.Read(ref _ticks);
+        public int Pending => _timers.Count(timer => timer.Active);
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            var timer = new BudgetTimer(this, callback, state);
+            timer.Change(dueTime, period);
+            _timers.Enqueue(timer);
+            return timer;
+        }
+        public void Advance(TimeSpan duration)
+        {
+            var now = Interlocked.Add(ref _ticks, duration.Ticks);
+            foreach (var timer in _timers)
+                timer.FireIfDue(now);
+        }
+        private sealed class BudgetTimer(BudgetClock owner, TimerCallback callback, object? state) : ITimer
+        {
+            private long _due;
+            private int _disposed;
+            public bool Active => Volatile.Read(ref _disposed) == 0;
+            public bool Change(TimeSpan dueTime, TimeSpan period)
+            {
+                if (period != Timeout.InfiniteTimeSpan)
+                    throw new NotSupportedException("Only one-shot budget timers are expected.");
+                Interlocked.Exchange(ref _due, dueTime == Timeout.InfiniteTimeSpan ? long.MaxValue : owner.GetTimestamp() + dueTime.Ticks);
+                return Active;
+            }
+            public void FireIfDue(long now)
+            {
+                if (now >= Interlocked.Read(ref _due) && Interlocked.Exchange(ref _disposed, 1) == 0)
+                    callback(state);
+            }
+            public void Dispose() => Interlocked.Exchange(ref _disposed, 1);
+            public ValueTask DisposeAsync()
+            {
+                Dispose();
+                return ValueTask.CompletedTask;
+            }
+        }
     }
     private sealed class FastClock : TimeProvider
     {

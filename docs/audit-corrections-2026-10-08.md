@@ -55,6 +55,8 @@ La [qualification complète du commit 5a3a4b3](https://github.com/Oswaaaald/f1_f
 - Le conteneur fonctionne effectivement sans root, avec système de fichiers en lecture seule et volume persistant ; arrêt et redémarrage conservent ses réglages.
 - Le scan de secrets dans l’historique, les audits NuGet/npm/Python, le scan du conteneur et celui de l’inventaire des six paquets passent. Cela reflète les bases de vulnérabilités à la date du contrôle, sans garantie pour les vulnérabilités inconnues ou publiées ensuite.
 
+La [publication de la preview.14](https://github.com/Oswaaaald/f1_flags_hue/actions/runs/37816676735) a également réussi tous ces contrôles et publié les attestations et fichiers téléchargeables. Un contrôle séparé de `main` a exposé une limite de temps trop stricte dans le test unitaire de Stop sous Windows. Ce test utilise désormais une horloge contrôlée : le renouvellement reste bloqué jusqu’à son annulation, et Stop doit réussir sans avancer cette horloge. La vérification ne dépend plus de la vitesse du disque ou de la charge du runner.
+
 Contrôle manuel dans Chrome sur ordinateur : sélection de zone partielle, résumé d’une seule lampe, sauvegarde, verrouillage pendant un Safety Car simulé, puis déverrouillage dans la même vue après Stop. Les cartes de préférences et de sauvegarde sont lisibles ; aucune erreur JavaScript n’est apparue pendant ce parcours. Le mobile est couvert par les navigateurs automatisés, sans contrôle manuel sur téléphone. Tous ces essais utilisent des profils temporaires sans pont réel.
 
 ## Qualification restante et limites
