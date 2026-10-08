@@ -39,7 +39,7 @@ jobs:
           syft-version: v1.54.1
           output-file: container.spdx.json
           upload-release-assets: false
-      - uses: anchore/scan-action@1638637db639e0ade3258b51db49a9a137574c3e # v6
+      - uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
         with:
           sbom: container.spdx.json
           grype-version: v0.120.1
