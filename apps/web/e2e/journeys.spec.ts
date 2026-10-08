@@ -45,9 +45,10 @@ test("Calibration, history, journal and replay work from the keyboard", async ({
   await expect(page.getByRole("tab", { name: "Calibration TV" })).toBeFocused();
   await page.getByRole("button", { name: "Retarder les effets de 0,1 seconde", exact: true }).click();
   await expect(page.locator('[data-live="offset"]').first()).toHaveText("0,1 s");
-  await page.getByRole("button", { name: "Prochain tour", exact: true }).click();
   await service.post(page, "/simulation/event", { topic: "SessionInfo", payload: { Key: 123, Name: "Course test", Type: "Race" } });
   await service.post(page, "/simulation/event", { topic: "SessionStatus", payload: { Status: "Started" } });
+  await page.getByRole("button", { name: "Prochain tour", exact: true }).click();
+  await expect(page.locator("#calibration-status")).toContainText("En attente du prochain repère");
   await service.post(page, "/simulation/event", { topic: "LapCount", payload: { CurrentLap: 2, TotalLaps: 50 } });
   await page.getByRole("button", { name: "Je le vois maintenant", exact: true }).click();
   await expect(page.locator("#offset-measurement")).toBeVisible();
@@ -75,7 +76,7 @@ test("Every view stays accessible at 320px and with enlarged text", async ({ pag
     expect(result.violations, JSON.stringify(result.violations, null, 2)).toEqual([]);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
   }
-  await page.getByLabel("Thème", { exact: true }).selectOption("dark");
+  await page.getByRole("combobox", { name: /^Thème/ }).selectOption("dark");
   expect((await new AxeBuilder({ page }).withTags(["wcag2aa"]).analyze()).violations).toEqual([]);
   await page.addStyleTag({ content: "html { font-size: 28px !important; }" });
   await expect(page.locator("#stop")).toBeInViewport();
@@ -92,4 +93,24 @@ test("Leaving a view cancels its read and does not produce stale DOM errors", as
   await page.getByRole("link", { name: "Préférences", exact: true }).click();
   await expect(page.getByRole("heading", { name: "À ton rythme." })).toBeVisible();
   expect(errors).toEqual([]);
+});
+
+
+test("Recovery guidance is shown only after active control ends", async ({ page, service }) => {
+  await service.open(page);
+  const response = await page.request.get(service.url + "/api/state");
+  const state = await response.json();
+  state.recovery = { pending: true, bridgeId: "test-bridge", lightIds: ["11111111-1111-1111-1111-111111111111"], resources: ["pending_restore"] };
+  state.runner.running = true;
+  state.runner.mode = "live";
+  await page.route("**/api/state", route => route.fulfill({ json: state }));
+  await page.route("**/api/events", route => route.fulfill({ contentType: "text/event-stream", body: `data: ${JSON.stringify(state)}\n\n` }));
+  await page.reload();
+  await expect(page.locator("#shell")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Récupérer ton ambiance" })).toHaveCount(0);
+  state.runner.running = false;
+  state.runner.cleanupPending = true;
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Récupérer ton ambiance" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Restaurer les lampes disponibles" })).toBeEnabled();
 });

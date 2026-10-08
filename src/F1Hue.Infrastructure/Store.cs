@@ -58,6 +58,7 @@ public sealed class Store : ISettingsStore, IDisposable
                         UPDATE events SET kind=json_extract(body,'$.kind');
                         CREATE INDEX events_flag_session ON events(session_key,id) WHERE kind='flag';
                         CREATE TABLE event_sessions(session_key TEXT PRIMARY KEY, flags INTEGER NOT NULL, latest INTEGER NOT NULL, name TEXT NOT NULL, at TEXT NOT NULL);
+                        CREATE INDEX event_sessions_latest ON event_sessions(latest DESC);
                         INSERT INTO event_sessions SELECT e.session_key,s.flags,s.latest,COALESCE(json_extract(e.body,'$.sessionName'),'Séance F1'),e.received_at
                         FROM (SELECT session_key,COUNT(*) flags,MAX(id) latest FROM events WHERE kind='flag' AND session_key IS NOT NULL GROUP BY session_key) s JOIN events e ON e.id=s.latest;
                         CREATE TRIGGER event_session_insert AFTER INSERT ON events WHEN NEW.kind='flag' AND NEW.session_key IS NOT NULL BEGIN
@@ -144,10 +145,10 @@ public sealed class Store : ISettingsStore, IDisposable
         }
         Changed?.Invoke();
     }
-    public void Append(RaceEvent item)
+    public bool Append(RaceEvent item)
     {
         if (item.Kind is not ("flag" or "lap" or "session_status") || item.Initial)
-            return;
+            return false;
         lock (_gate)
         {
             using var transaction = _db.BeginTransaction();
@@ -164,6 +165,7 @@ public sealed class Store : ISettingsStore, IDisposable
             _sessions = null;
         }
         Changed?.Invoke();
+        return true;
     }
     public RaceEvent[] Events(string? sessionKey = null, int limit = 100)
     {

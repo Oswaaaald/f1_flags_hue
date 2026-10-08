@@ -3,7 +3,13 @@ import { button, esc } from "../ui";
 
 export function recovery(state: State) {
   const recovery = state.recovery;
-  if (!recovery?.pending) return "";
+  if (
+    !recovery?.pending ||
+    state.runner.running ||
+    state.runner.stopping ||
+    state.initializing
+  )
+    return "";
   return `<section class="card recovery" aria-labelledby="recovery-title"><h2 id="recovery-title">Récupérer ton ambiance</h2>
     <p>L’état initial est sauvegardé. ${recovery.lightIds.length} lampe(s) restent à vérifier.</p>
     <details><summary>Lampes et ressources concernées</summary><ul>${recovery.lightIds.map((id) => `<li><code>${esc(id)}</code></li>`).join("")}</ul><p>${recovery.resources.map(esc).join(", ")}</p><p>Pont : ${esc(recovery.bridgeId ?? "identité ancienne indisponible")}</p></details>

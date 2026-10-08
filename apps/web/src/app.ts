@@ -255,7 +255,12 @@ function update() {
     serviceWarning.textContent = messages.join(" ");
   }
   const recoveryContainer = document.querySelector<HTMLElement>("#recovery");
-  const nextRecoveryKey = JSON.stringify(state.recovery);
+  const nextRecoveryKey = JSON.stringify([
+    state.recovery,
+    state.runner.running,
+    state.runner.stopping,
+    state.initializing,
+  ]);
   if (recoveryContainer && nextRecoveryKey !== recoveryKey) {
     recoveryContainer.innerHTML = recovery(state);
     recoveryKey = nextRecoveryKey;

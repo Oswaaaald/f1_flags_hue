@@ -31,12 +31,12 @@ Ce suivi concerne le code de la preview.14. Le [rapport initial](audit-2026-10-0
 | A23 | Arrêt/import asynchrones des lanceurs ; état d’attente visible | Compilation Swift/Windows, essais lifecycle natifs en CI |
 | A24 | Installation Linux avec staging, lien atomique, arrêt obligatoire, rollback et drop-ins conservés | Transaction simulée puis service utilisateur systemd réel en CI |
 | A25 | Parcours navigateur, Docker exécuté, service Linux et paquets natifs, installateur Windows | Workflows étendus ; qualification manuelle matérielle explicitée ci-dessous |
-| A26 | Séparation contrats/sécurité/SSE/proxy/récupération, modules UI, formatage et contrôles de version | Compilation sans avertissement, formatage, types générés, métadonnées de version |
+| A26 | Séparation contrats/sécurité/SSE/proxy/récupération, modules UI, formatage et contrôles de version | Compilation sans avertissement, formatage, types générés, métadonnées de version et empreinte des sources web ; proposition de rechargement après mise à jour |
 | A27 | Documentation unifiée, support Python limité et dépendances figées, scénario Monza corrigé | Guides de maintenance, exploitation, sécurité et changelog |
 
 ## Vérifications locales effectuées
 
-- 205 contrôles C# réussis avant l’ajout de la mesure du journal de 100 000 événements ; le décompte final est publié après la dernière exécution.
+- 207 contrôles C# réussis, dont le comptage et la rétention du journal de 100 000 événements. 1 000 lectures du cache combiné réglages/journal/séances ont pris environ 0,2 ms sur ce Mac ; cela exclut la sérialisation HTTP et le coût d’une invalidation.
 - 27 contrôles API, 17 contrôles d’authentification bureau, 14 contrôles HTTP d’audit et 77 tests Python réussis.
 - TypeScript, contrats générés, compilation du lanceur Windows et vérification de types du lanceur Swift réussis.
 - Runtime local : .NET 10.0.12, SQLite 3.53.3, ARM64.

@@ -35,8 +35,8 @@ public sealed class F1Feed(Store? store, OperationTimeline? timeline = null) : I
                 catch (Exception) { Volatile.Write(ref _processingError, "Un événement n’a pas pu être transmis. Arrête puis relance le direct ; consulte le diagnostic."); }
             try
             {
-                store?.Append(item);
-                Volatile.Write(ref _journalError, null);
+                if (store?.Append(item) == true)
+                    Volatile.Write(ref _journalError, null);
             }
             catch (Exception e) when (e is Microsoft.Data.Sqlite.SqliteException or IOException or UnauthorizedAccessException)
             {
