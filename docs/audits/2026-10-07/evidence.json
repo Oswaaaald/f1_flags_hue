@@ -1,0 +1,482 @@
+{
+  "auditedCommit": "9bcfcd876d98cee80fe95cd11c63c4a79a023224",
+  "auditedVersion": "2.0.0-preview.13",
+  "date": "2026-10-07",
+  "standardChecks": {
+    "dotnet": 168,
+    "http": 27,
+    "desktopAuth": 17,
+    "python": 77
+  },
+  "dependencies": {
+    "nugetKnownVulnerableEntries": 0,
+    "npmKnownVulnerabilities": 0,
+    "pythonOSV": [
+      {
+        "name": "Flask",
+        "version": "3.1.3",
+        "vulnerabilities": []
+      },
+      {
+        "name": "click",
+        "version": "8.5.0",
+        "vulnerabilities": []
+      },
+      {
+        "name": "charset-normalizer",
+        "version": "3.5.1",
+        "vulnerabilities": []
+      },
+      {
+        "name": "requests",
+        "version": "2.34.2",
+        "vulnerabilities": []
+      },
+      {
+        "name": "zeroconf",
+        "version": "0.151.3",
+        "vulnerabilities": []
+      },
+      {
+        "name": "blinker",
+        "version": "1.9.0",
+        "vulnerabilities": []
+      },
+      {
+        "name": "itsdangerous",
+        "version": "2.2.0",
+        "vulnerabilities": []
+      },
+      {
+        "name": "ifaddr",
+        "version": "0.2.0",
+        "vulnerabilities": []
+      },
+      {
+        "name": "urllib3",
+        "version": "2.8.0",
+        "vulnerabilities": []
+      },
+      {
+        "name": "PyYAML",
+        "version": "6.0.3",
+        "vulnerabilities": []
+      },
+      {
+        "name": "certifi",
+        "version": "2026.7.22",
+        "vulnerabilities": []
+      },
+      {
+        "name": "Jinja2",
+        "version": "3.1.6",
+        "vulnerabilities": []
+      },
+      {
+        "name": "MarkupSafe",
+        "version": "3.0.3",
+        "vulnerabilities": []
+      },
+      {
+        "name": "websocket-client",
+        "version": "1.9.2",
+        "vulnerabilities": []
+      },
+      {
+        "name": "idna",
+        "version": "3.20",
+        "vulnerabilities": []
+      },
+      {
+        "name": "Werkzeug",
+        "version": "3.1.9",
+        "vulnerabilities": []
+      }
+    ]
+  },
+  "probes": [
+    {
+      "probe": "snapshot-sc-ending",
+      "result": {
+        "initial": "SC",
+        "afterDelta": "SC_ENDING"
+      }
+    },
+    {
+      "probe": "schema-downgrade",
+      "result": {
+        "before": 99,
+        "after": 1
+      }
+    },
+    {
+      "probe": "journal-failure",
+      "result": {
+        "error": "SqliteException",
+        "deliveredFlags": 0,
+        "connected": true,
+        "lastFlag": "RED",
+        "lastError": null
+      }
+    },
+    {
+      "probe": "single-restore",
+      "result": {
+        "requests": [
+          "PUT /clip/v2/resource/light/11111111-1111-1111-1111-111111111111"
+        ],
+        "stillGreen": true,
+        "recoveryDeleted": true
+      }
+    },
+    {
+      "probe": "state-db-cost-ms",
+      "result": {
+        "emptyP50": 0.0276,
+        "fullP50": 20.214,
+        "fullP95": 23.0338,
+        "rows": 100000,
+        "iterations": 30
+      }
+    },
+    {
+      "probe": "https-proxy",
+      "status": 403
+    },
+    {
+      "probe": "invalid-input",
+      "result": [
+        {
+          "url": "/api/hue/select",
+          "body": {
+            "lightIds": null,
+            "groupIds": []
+          },
+          "status": 400,
+          "error": "Sélection invalide."
+        },
+        {
+          "url": "/api/hue/select",
+          "body": {},
+          "status": 400,
+          "error": "Sélection invalide."
+        },
+        {
+          "url": "/api/hue/select",
+          "body": {
+            "lightIds": [
+              "not-a-guid"
+            ],
+            "groupIds": []
+          },
+          "status": 400,
+          "error": "La sélection contient une lampe ou une zone introuvable."
+        },
+        {
+          "url": "/api/test/preview",
+          "body": [],
+          "status": 409,
+          "error": "The requested operation requires an element of type 'Object', but the target element has type 'Array'."
+        },
+        {
+          "url": "/api/test/preview",
+          "body": null,
+          "status": 409,
+          "error": "The requested operation requires an element of type 'Object', but the target element has type 'Null'."
+        },
+        {
+          "url": "/api/test/preview",
+          "body": {
+            "flag": 1
+          },
+          "status": 400,
+          "error": "Champ requis : flag"
+        },
+        {
+          "url": "/api/calibration/clock",
+          "body": {
+            "remaining": null
+          },
+          "status": 400,
+          "error": "Champ requis : remaining"
+        },
+        {
+          "url": "/api/settings",
+          "body": [],
+          "status": 400,
+          "error": "Réglages invalides."
+        },
+        {
+          "url": "/api/settings",
+          "body": {
+            "effects": null
+          },
+          "status": 400,
+          "error": "Drapeaux invalides."
+        },
+        {
+          "url": "/api/settings",
+          "body": {
+            "transitionSeconds": 1e+100
+          },
+          "status": 400,
+          "error": "Réglages numériques invalides."
+        },
+        {
+          "url": "/api/replay/start",
+          "body": {
+            "id": "x",
+            "kind": "archive",
+            "speed": {}
+          },
+          "status": 409,
+          "error": "The requested operation requires an element of type 'Number', but the target element has type 'Object'."
+        },
+        {
+          "url": "/api/hue/scene",
+          "body": {},
+          "status": 400,
+          "error": "Scène Hue invalide."
+        }
+      ]
+    },
+    {
+      "probe": "shutdown-with-sse",
+      "exited": true,
+      "elapsedMs": 30499,
+      "framesAfterStop": [
+        {
+          "running": true,
+          "stopping": false,
+          "effect": "SC",
+          "atMs": 14715
+        },
+        {
+          "running": true,
+          "stopping": false,
+          "effect": "SC",
+          "atMs": 29720
+        }
+      ]
+    }
+  ],
+  "cssContrast": {
+    "mutedOnWhite": 4.293,
+    "mutedOnBackground": 4.11,
+    "mutedOnAccentSoft": 3.757
+  },
+  "frontendBytes": {
+    "javascript": 31619,
+    "css": 18579,
+    "javascriptGzip": 10582,
+    "cssGzip": 3973
+  },
+  "completedDate": "2026-10-08",
+  "verificationRun": [
+    {
+      "probe": "snapshot-sc-ending",
+      "result": {
+        "initial": "SC",
+        "afterDelta": "SC_ENDING"
+      }
+    },
+    {
+      "probe": "schema-downgrade",
+      "result": {
+        "before": 99,
+        "after": 1
+      }
+    },
+    {
+      "probe": "journal-failure",
+      "result": {
+        "error": "SqliteException",
+        "deliveredFlags": 0,
+        "connected": true,
+        "lastFlag": "RED",
+        "lastError": null
+      }
+    },
+    {
+      "probe": "single-restore",
+      "result": {
+        "requests": [
+          "PUT /clip/v2/resource/light/11111111-1111-1111-1111-111111111111"
+        ],
+        "stillGreen": true,
+        "recoveryDeleted": true
+      }
+    },
+    {
+      "probe": "state-db-cost-ms",
+      "result": {
+        "emptyP50": 0.0308,
+        "fullP50": 20.042,
+        "fullP95": 23.6697,
+        "rows": 100000,
+        "iterations": 30
+      }
+    },
+    {
+      "probe": "https-proxy",
+      "status": 403
+    },
+    {
+      "probe": "invalid-input",
+      "result": [
+        {
+          "url": "/api/hue/select",
+          "body": {
+            "lightIds": null,
+            "groupIds": []
+          },
+          "status": 400,
+          "error": "Sélection invalide."
+        },
+        {
+          "url": "/api/hue/select",
+          "body": {},
+          "status": 400,
+          "error": "Sélection invalide."
+        },
+        {
+          "url": "/api/hue/select",
+          "body": {
+            "lightIds": [
+              "not-a-guid"
+            ],
+            "groupIds": []
+          },
+          "status": 400,
+          "error": "La sélection contient une lampe ou une zone introuvable."
+        },
+        {
+          "url": "/api/test/preview",
+          "body": [],
+          "status": 409,
+          "error": "The requested operation requires an element of type 'Object', but the target element has type 'Array'."
+        },
+        {
+          "url": "/api/test/preview",
+          "body": null,
+          "status": 409,
+          "error": "The requested operation requires an element of type 'Object', but the target element has type 'Null'."
+        },
+        {
+          "url": "/api/test/preview",
+          "body": {
+            "flag": 1
+          },
+          "status": 400,
+          "error": "Champ requis : flag"
+        },
+        {
+          "url": "/api/calibration/clock",
+          "body": {
+            "remaining": null
+          },
+          "status": 400,
+          "error": "Champ requis : remaining"
+        },
+        {
+          "url": "/api/settings",
+          "body": [],
+          "status": 400,
+          "error": "Réglages invalides."
+        },
+        {
+          "url": "/api/settings",
+          "body": {
+            "effects": null
+          },
+          "status": 400,
+          "error": "Drapeaux invalides."
+        },
+        {
+          "url": "/api/settings",
+          "body": {
+            "transitionSeconds": 1e+100
+          },
+          "status": 400,
+          "error": "Réglages numériques invalides."
+        },
+        {
+          "url": "/api/replay/start",
+          "body": {
+            "id": "x",
+            "kind": "archive",
+            "speed": {}
+          },
+          "status": 409,
+          "error": "The requested operation requires an element of type 'Number', but the target element has type 'Object'."
+        },
+        {
+          "url": "/api/hue/scene",
+          "body": {},
+          "status": 400,
+          "error": "Scène Hue invalide."
+        }
+      ]
+    },
+    {
+      "probe": "shutdown-with-sse",
+      "exited": true,
+      "elapsedMs": 30436,
+      "framesAfterStop": [
+        {
+          "running": true,
+          "stopping": false,
+          "effect": "SC",
+          "atMs": 14717
+        },
+        {
+          "running": true,
+          "stopping": false,
+          "effect": "SC",
+          "atMs": 29721
+        }
+      ]
+    },
+    {
+      "probe": "official-archive",
+      "result": {
+        "id": "baku-qualifying-2025",
+        "events": 35,
+        "flags": [
+          "GREEN",
+          "YELLOW",
+          "RED",
+          "CHEQUERED"
+        ]
+      }
+    },
+    {
+      "probe": "official-archive",
+      "result": {
+        "id": "silverstone-race-2025",
+        "events": 34,
+        "flags": [
+          "GREEN",
+          "YELLOW",
+          "VSC",
+          "VSC_ENDING",
+          "SC",
+          "SC_ENDING",
+          "BLUE",
+          "CHEQUERED"
+        ]
+      }
+    },
+    {
+      "probe": "official-archive",
+      "result": {
+        "id": "monza-practice-2025",
+        "events": 2,
+        "flags": [
+          "GREEN",
+          "CHEQUERED"
+        ]
+      }
+    }
+  ]
+}

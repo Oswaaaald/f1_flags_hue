@@ -1,12 +1,25 @@
 import type { State, Flag, Inventory, RaceEvent, Scenario } from "./types";
 import { flags, labels } from "./flags";
 import { $, esc, dot, button } from "./ui";
-import { api } from "./api";
+import { api, viewApi, changeView } from "./api";
+import { Drafts } from "./drafts";
+import { icons, navNames } from "./navigation";
+import {
+  updateFreshness as renderFreshness,
+  updateCalibration as renderCalibration,
+} from "./calibration-controls";
+import { syncSelection } from "./selection";
+import { recovery } from "./views/recovery";
 import { live, logs } from "./views/live";
 import { hue } from "./views/hue";
 import { tests, scenarioOptions } from "./views/tests";
 import { flagSettings, preferences } from "./views/settings";
 
+declare const __UI_BUILD__: string;
+const drafts = new Drafts();
+let formRevision = -1;
+let serviceConnected = true;
+let recoveryKey = "";
 let stopRequested = false;
 let offsetDirty = false;
 let offsetSaving = false;
@@ -78,24 +91,17 @@ async function showAuth() {
   $("#auth").innerHTML =
     `<img src="/icon.svg" alt="" width="45" height="45"><h1>${auth.setupRequired ? "Bienvenue chez toi." : "Prêt pour le départ ?"}</h1><p>${auth.setupRequired ? "Protège l’accès à tes lampes avec un mot de passe." : "Connecte-toi pour retrouver tes lampes et ta calibration."}</p><form id="auth-form" data-form="${auth.setupRequired ? "setup" : "login"}">${auth.setupRequired ? `<label class="field">Code de configuration<input name="code" autocomplete="off" value="${esc(setupCode)}" required></label><p class="help section-gap">L’application remplit ce code automatiquement au premier lancement. Sur un serveur, il se trouve dans le fichier setup-code.txt du dossier de données.</p>` : ""}<label class="field">Mot de passe<input name="password" type="password" autocomplete="${auth.setupRequired ? "new-password" : "current-password"}" minlength="${auth.setupRequired ? "12" : "1"}" maxlength="256" required></label><div class="actions"><button class="button primary">${auth.setupRequired ? "Configurer F1 Hue" : "Se connecter"}</button></div><p class="help section-gap">${auth.setupRequired ? "12 caractères minimum. Aucun compte en ligne nécessaire." : ""}</p></form>`;
 }
-const icons: Record<string, string> = {
-  live: '<path d="M4 12h3l3-7 4 14 3-7h3"/>',
-  hue: '<path d="M9 18h6m-5 3h4M8 14a6 6 0 1 1 8 0l-1 3H9z"/>',
-  tests: '<path d="M8 4v16l12-8z"/>',
-  flags: '<path d="M5 21V3m0 1h14l-3 5 3 5H5"/>',
-  preferences:
-    '<path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3"/><circle cx="15" cy="17" r="3"/>',
-};
-const navNames: Record<string, string> = {
-  live: "Direct",
-  hue: "Hue",
-  tests: "Tests",
-  flags: "Drapeaux",
-  preferences: "Préférences",
-};
-function navigate(next: string) {
-  page = navNames[next] ? next : "live";
-  history.replaceState(null, "", "#" + page);
+function navigate(next: string, push = true, focus = true) {
+  changeView();
+  const [nextPage, nextTab] = next.split("/");
+  page = navNames[nextPage ?? ""] ? nextPage! : "live";
+  if (nextTab)
+    tab = ["overview", "calibration", "journal"].includes(nextTab)
+      ? nextTab
+      : "overview";
+  const hash =
+    "#" + page + (page === "live" && tab !== "overview" ? "/" + tab : "");
+  if (push && location.hash !== hash) history.pushState(null, "", hash);
   $("#nav").innerHTML = Object.entries(navNames)
     .map(
       ([id, name]) =>
@@ -104,11 +110,20 @@ function navigate(next: string) {
     .join("");
   $("#breadcrumb").textContent = navNames[page]!;
   render();
+  if (focus) {
+    $("#main").focus();
+    window.scrollTo({ top: 0 });
+  }
 }
+window.addEventListener("popstate", () => {
+  if (state) {
+    tab = "overview";
+    navigate(location.hash.slice(1), false);
+  }
+});
 function render() {
-  offsetDirty = false;
   $("#main").innerHTML =
-    '<div id="runner-error" class="notice error" role="alert" hidden></div>' +
+    '<div id="service-warning" class="notice error" role="status" hidden></div><div id="runner-error" class="notice error" role="alert" hidden></div><div id="recovery"></div>' +
     (page === "live"
       ? live(state, tab)
       : page === "hue"
@@ -118,23 +133,33 @@ function render() {
           : page === "flags"
             ? flagSettings(state)
             : preferences(state));
+  recoveryKey = "";
+  drafts.mount($("#main"), state.settings.revision);
+  offsetDirty =
+    !!document.querySelector<HTMLFormElement>('[data-form="offset"]') &&
+    drafts.has($<HTMLFormElement>('[data-form="offset"]'));
   update();
   if (page === "hue") void loadInventory();
   if (page === "tests" && scenarios.length === 0)
-    void api<Scenario[]>("/replay/scenarios")
+    void viewApi<Scenario[]>("/replay/scenarios")
       .then((rows) => {
         scenarios = rows;
-        if (page === "tests")
+        if (page === "tests") {
           $("#replay-scenario").innerHTML = scenarioOptions(state, scenarios);
+          drafts.mount($("#main"), state.settings.revision);
+        }
       })
-      .catch((e) => toast(e.message, true));
+      .catch((e) => {
+        if (e.name !== "AbortError") toast(e.message, true);
+      });
 }
 async function loadInventory() {
   if (!state.hue.linked) return;
   try {
-    inventory = await api<Inventory>("/hue/inventory");
+    inventory = await viewApi<Inventory>("/hue/inventory");
     if (page === "hue") renderInventory();
   } catch (e) {
+    if ((e as Error).name === "AbortError") return;
     if (page === "hue")
       $("#inventory").innerHTML =
         `<div class="notice error">${esc((e as Error).message)}</div>`;
@@ -143,7 +168,9 @@ async function loadInventory() {
 function renderInventory() {
   if (!inventory) return;
   $("#inventory").innerHTML =
-    `<div class="notice" data-hue-lock-notice hidden>Termine l’arrêt des lampes pour modifier cette sélection.</div><form data-form="selection"><h3 class="section-gap">Zones et pièces</h3>${inventory.groups.map((g) => `<label class="check"><input type="checkbox" data-group="${esc(g.id)}"${g.lightIds.length && g.lightIds.every((id) => state.settings.lightIds.includes(id)) ? " checked" : ""}>${esc(g.name)}<small>${g.lightIds.length} lampes</small></label>`).join("") || '<p class="help">Aucune zone sur ce pont.</p>'}<h3 class="section-gap">Lampes</h3>${inventory.lights.map((l) => `<label class="check"><input type="checkbox" name="lights" value="${esc(l.id)}"${state.settings.lightIds.includes(l.id) ? " checked" : ""}${!l.color ? " data-unavailable disabled" : ""}>${esc(l.name)}${!l.color ? "<small>Sans couleur</small>" : ""}</label>`).join("")}<p class="help section-gap">Les clignotements utilisent la pulsation native du pont. Les lampes sélectionnées pulsent ensemble, sans zone Entertainment à configurer.</p><div class="actions"><button class="button primary">Enregistrer la sélection</button></div></form>`;
+    `<div class="notice" data-hue-lock-notice hidden>Termine l’arrêt des lampes pour modifier cette sélection.</div><form data-form="selection"><p id="selection-summary" class="help" aria-live="polite"></p><h3 class="section-gap">Zones et pièces</h3>${inventory.groups.map((g) => `<label class="check"><input type="checkbox" data-group="${esc(g.id)}"${g.lightIds.length && g.lightIds.every((id) => state.settings.lightIds.includes(id)) ? " checked" : ""}>${esc(g.name)}<small>${g.lightIds.length} lampes</small></label>`).join("") || '<p class="help">Aucune zone sur ce pont.</p>'}<h3 class="section-gap">Lampes</h3>${inventory.lights.map((l) => `<label class="check"><input type="checkbox" name="lights" value="${esc(l.id)}"${state.settings.lightIds.includes(l.id) ? " checked" : ""}${!l.color ? " data-unavailable disabled" : ""}>${esc(l.name)}${!l.color ? "<small>Sans couleur</small>" : ""}</label>`).join("")}<p class="help section-gap">Les clignotements utilisent la pulsation native du pont. Les lampes sélectionnées pulsent ensemble, sans zone Entertainment à configurer.</p><div class="actions"><button class="button primary">Enregistrer la sélection</button></div></form>`;
+  drafts.mount($("#inventory"), state.settings.revision);
+  syncSelection(inventory);
   updateControls();
 }
 function updateControls() {
@@ -152,7 +179,8 @@ function updateControls() {
     state.initializing ||
     state.runner.running ||
     state.runner.stopping ||
-    state.runner.cleanupPending;
+    state.runner.cleanupPending ||
+    !!state.recovery?.pending;
   const disable = (el: HTMLElement, value: boolean) =>
     el.toggleAttribute("disabled", value || pending.has(el));
   disable($("#stop"), stopRequested || state.runner.stopping);
@@ -182,13 +210,22 @@ function updateControls() {
     .querySelectorAll<HTMLElement>(
       '[data-action^="preview:"], [data-action="sequence"], [data-form="replay"] button',
     )
-    .forEach((el) => disable(el, locked));
+    .forEach((el) =>
+      disable(
+        el,
+        locked || !state.hue.linked || state.settings.lightIds.length === 0,
+      ),
+    );
 }
 function update() {
+  $("#reload-interface").hidden =
+    !state.uiBuild || state.uiBuild === __UI_BUILD__;
   if (!state) return;
-  $("#connection").textContent = state.feed.connected
-    ? "Flux F1 connecté"
-    : "Flux F1 hors ligne";
+  $("#connection").textContent = !serviceConnected
+    ? "Service déconnecté"
+    : state.feed.connected
+      ? "Flux F1 connecté"
+      : "Flux F1 hors ligne";
   $("#connection").className = "badge " + (state.feed.connected ? "good" : "");
   updateControls();
   $("#stop").textContent =
@@ -201,6 +238,48 @@ function update() {
   $("#simulation").textContent = state.simulation
     ? "Mode démonstration · lampes simulées"
     : "";
+  const serviceWarning =
+    document.querySelector<HTMLElement>("#service-warning");
+  if (serviceWarning) {
+    const messages = [
+      !serviceConnected
+        ? "Connexion au service perdue. Les commandes ne sont pas confirmées ; reconnexion en cours…"
+        : null,
+      state.feed.journalError,
+      state.feed.processingError,
+      state.startup.phase === "waiting"
+        ? `${state.startup.error} Nouvelle tentative automatique ${state.startup.retryAt ? new Date(state.startup.retryAt).toLocaleTimeString("fr-BE") : "bientôt"}. Stop annule cette reprise.`
+        : null,
+    ].filter(Boolean);
+    serviceWarning.hidden = messages.length === 0;
+    serviceWarning.textContent = messages.join(" ");
+  }
+  const recoveryContainer = document.querySelector<HTMLElement>("#recovery");
+  const nextRecoveryKey = JSON.stringify(state.recovery);
+  if (recoveryContainer && nextRecoveryKey !== recoveryKey) {
+    recoveryContainer.innerHTML = recovery(state);
+    recoveryKey = nextRecoveryKey;
+  }
+  if (formRevision !== state.settings.revision) {
+    const template = document.createElement("template");
+    template.innerHTML =
+      flagSettings(state) + preferences(state) + live(state, "calibration");
+    for (const form of document.querySelectorAll<HTMLFormElement>(
+      "#main form[data-form]",
+    )) {
+      if (pending.has(form)) continue;
+      const selector = `form[data-form="${form.dataset.form}"]${form.dataset.flag ? `[data-flag="${form.dataset.flag}"]` : ""}`;
+      const fresh = template.content.querySelector<HTMLFormElement>(selector);
+      if (fresh) drafts.reconcile(form, fresh, state.settings.revision);
+    }
+    const selection = document.querySelector<HTMLFormElement>(
+      '[data-form="selection"]',
+    );
+    if (selection && !drafts.has(selection) && !pending.has(selection))
+      renderInventory();
+    formRevision = state.settings.revision;
+  }
+  drafts.warnings($("#main"), state.settings.revision);
   const values: Record<string, string> = {
     session: state.feed.sessionName ?? "En attente d’une séance",
     "session-description":
@@ -213,7 +292,7 @@ function update() {
             ? "Séance terminée · en attente du prochain départ"
             : "Le flux attend les informations de la prochaine séance."),
     effect: state.runner.activeEffect
-      ? labels[state.runner.activeEffect]
+      ? (labels[state.runner.activeEffect as Flag] ?? state.runner.activeEffect)
       : "Ambiance initiale",
     offset: `${state.settings.offsetSeconds.toLocaleString("fr-BE")} s`,
     targets: `${state.settings.lightIds.length} lampe${state.settings.lightIds.length !== 1 ? "s" : ""}`,
@@ -252,88 +331,16 @@ function update() {
   if (themeSelect)
     themeSelect.value = localStorage.getItem("f1hue.theme") ?? "light";
   updateCalibration();
+  updateFreshness();
+}
+function updateFreshness() {
+  renderFreshness(state, serverDelta);
 }
 function updateCalibration() {
-  const offsetInput =
-    document.querySelector<HTMLInputElement>('[name="offset"]');
-  if (offsetInput) {
-    if (!offsetDirty && !offsetSaving)
-      offsetInput.value = String(state.settings.offsetSeconds);
-    offsetInput.disabled = offsetSaving;
-    document
-      .querySelectorAll<HTMLButtonElement>('[data-action^="adjust-offset:"]')
-      .forEach((b) => {
-        const delta = Number(b.dataset.action!.split(":")[1]);
-        b.disabled =
-          offsetSaving ||
-          offsetDirty ||
-          (delta < 0 && state.settings.offsetSeconds <= 0) ||
-          (delta > 0 && state.settings.offsetSeconds >= 3600);
-      });
-    const save = document.querySelector<HTMLButtonElement>(
-      '[data-form="offset"] button[type="submit"]',
-    );
-    if (save) save.disabled = offsetSaving;
-    const use = document.querySelector<HTMLButtonElement>(
-      '[data-action="use-offset"]',
-    );
-    if (use)
-      use.disabled = offsetSaving || state.calibration.proposedOffset === null;
-    $("#offset-feedback").textContent = offsetSaving
-      ? "Enregistrement…"
-      : offsetDirty
-        ? "Valeur modifiée : enregistre-la pour utiliser les boutons d’ajustement."
-        : "Chaque clic est enregistré, même pendant le direct. Limites : 0 à 3 600 secondes.";
-  }
-  const status = document.querySelector("#calibration-status");
-  if (status) {
-    const c = state.calibration;
-    status.textContent = c.waiting
-      ? "En attente du prochain repère sur le flux F1…"
-      : c.reference
-        ? `Repère reçu : ${c.mode === "start" ? "départ de la course" : c.mode === "lap" ? "tour " + c.reference.value : (labels[c.reference.value as Flag] ?? c.reference.value)}. Clique quand tu le vois à la TV.`
-        : "Choisis un repère pour démarrer.";
-    const seen = document.querySelector<HTMLButtonElement>(
-      '[data-action="seen"]',
-    )!;
-    seen.disabled =
-      !c.reference || c.proposedOffset !== null || pending.has(seen);
-    $("#offset-measurement").hidden = c.proposedOffset === null;
-    $("#proposed-offset").textContent =
-      c.proposedOffset !== null ? `${c.proposedOffset} secondes` : "";
-  }
-  const clock = document.querySelector("#session-clock");
-  if (clock) {
-    const c = state.feed.clock;
-    let seconds: number | null = null;
-    if (
-      c?.remaining &&
-      c.utc &&
-      c.extrapolating &&
-      state.feed.connected &&
-      state.feed.sessionStatus === "Started"
-    ) {
-      const parts = c.remaining.split(":").map(Number);
-      seconds =
-        parts.reduce((a, b) => a * 60 + b, 0) -
-        (Date.now() + serverDelta - Date.parse(c.utc)) / 1000;
-      if (!Number.isFinite(seconds) || seconds < 0) seconds = null;
-    }
-    clock.textContent =
-      seconds === null
-        ? "—:—"
-        : `${Math.floor(seconds / 60)
-            .toString()
-            .padStart(2, "0")}:${Math.floor(seconds % 60)
-            .toString()
-            .padStart(2, "0")}`;
-    $("#clock-note").textContent =
-      seconds === null
-        ? "Le chrono est arrêté ou indisponible hors séance."
-        : "Temps restant estimé à partir du chrono F1.";
-  }
+  renderCalibration(state, pending, { offsetDirty, offsetSaving, serverDelta });
 }
 window.setInterval(() => {
+  if (state) updateFreshness();
   if (state && page === "live" && tab === "calibration") updateCalibration();
 }, 250);
 async function saveOffset(value: number, relative = false) {
@@ -341,11 +348,24 @@ async function saveOffset(value: number, relative = false) {
   offsetSaving = true;
   updateCalibration();
   try {
-    state.settings = await api<State["settings"]>(
+    const saved = await api<State["settings"]>(
       relative ? "/calibration/adjust" : "/settings",
       relative ? "POST" : "PATCH",
       relative ? { deltaSeconds: value } : { offsetSeconds: value },
+      relative
+        ? {}
+        : {
+            revision:
+              drafts.revision($<HTMLFormElement>('[data-form="offset"]')) ??
+              state.settings.revision,
+          },
     );
+    state.settings = saved;
+    const offsetForm = document.querySelector<HTMLFormElement>(
+      '[data-form="offset"]',
+    );
+    if (offsetForm) drafts.clear(offsetForm);
+    formRevision = -1;
     offsetDirty = false;
   } finally {
     offsetSaving = false;
@@ -356,16 +376,18 @@ async function boot() {
   await refresh();
   $("#auth").hidden = true;
   $("#shell").hidden = false;
-  navigate(location.hash.slice(1) || "live");
+  navigate(location.hash.slice(1) || "live", false, false);
   stream?.close();
   stream = new EventSource("/api/events");
   stream.onmessage = (e) => {
+    serviceConnected = true;
     state = JSON.parse(e.data) as State;
     serverDelta = Date.parse(state.serverUtc) - Date.now();
     update();
   };
   stream.onerror = () => {
-    $("#connection").textContent = "Reconnexion au service…";
+    serviceConnected = false;
+    update();
     void api<{ authenticated: boolean }>("/auth/status")
       .then((auth) => {
         if (!auth.authenticated) return showAuth();
@@ -374,6 +396,32 @@ async function boot() {
   };
 }
 async function action(name: string, target: HTMLElement) {
+  if (name === "reload-interface") {
+    location.reload();
+    return;
+  }
+  if (name === "discard-draft") {
+    const form = target.closest("form")!;
+    drafts.clear(form);
+    formRevision = -1;
+    render();
+    return;
+  }
+  if (name === "recover-available") {
+    await api("/recovery/available", "POST");
+    await refresh();
+    return;
+  }
+  if (name === "backup") {
+    const result = await api<{ file: string }>("/backup", "POST");
+    toast("Sauvegarde créée dans le dossier backups : " + result.file);
+    return;
+  }
+  if (name === "export-diagnostics") {
+    const result = await api("/diagnostics");
+    download(result, "f1-hue-diagnostic.json");
+    return;
+  }
   if (name === "stop") {
     stopRequested = true;
     update();
@@ -414,11 +462,15 @@ async function action(name: string, target: HTMLElement) {
       state.calibration.proposedOffset,
     );
     offsetDirty = true;
+    drafts.capture($<HTMLFormElement>('[data-form="offset"]'));
+    drafts.warnings($("#main"), state.settings.revision);
     updateCalibration();
     return;
   } else if (name === "discover") {
     const r = await api<{ addresses: string[] }>("/hue/discover", "POST");
-    $("#discovered").innerHTML = r.addresses.length
+    const discovered = target.closest("form")?.querySelector("#discovered");
+    if (!discovered?.isConnected) return;
+    discovered.innerHTML = r.addresses.length
       ? r.addresses
           .map(
             (ip) =>
@@ -428,12 +480,20 @@ async function action(name: string, target: HTMLElement) {
       : '<p class="help">Aucun pont trouvé. Tu peux saisir son adresse manuellement.</p>';
     return;
   } else if (name === "choose-ip") {
-    $<HTMLInputElement>('[name="ip"]').value = target.dataset.ip ?? "";
+    const ip = $<HTMLInputElement>('[name="ip"]');
+    ip.value = target.dataset.ip ?? "";
+    drafts.capture(ip.form!);
     return;
   } else if (name === "inventory") {
     await loadInventory();
     return;
   } else if (name === "unpair") {
+    if (
+      !confirm(
+        "Oublier le pont sur cet appareil ? Sa clé restera autorisée sur le pont. Pour la révoquer, supprime F1 Hue Sync dans les applications autorisées de Hue.",
+      )
+    )
+      return;
     await api("/hue/unpair", "POST");
     inventory = null;
     await refresh();
@@ -454,18 +514,50 @@ async function action(name: string, target: HTMLElement) {
       "/journal?session=" +
         encodeURIComponent($<HTMLSelectElement>("#journal-session").value),
     );
-    const url = URL.createObjectURL(
-      new Blob([JSON.stringify(events, null, 2)], { type: "application/json" }),
-    );
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = "f1-hue-drapeaux.json";
-    link.click();
-    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    download(events, "f1-hue-drapeaux.json");
     return;
   }
   await refresh();
 }
+function download(value: unknown, filename: string) {
+  const url = URL.createObjectURL(
+    new Blob([JSON.stringify(value, null, 2)], { type: "application/json" }),
+  );
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+document.addEventListener("keydown", (event) => {
+  const target = (event.target as Element).closest<HTMLButtonElement>(
+    '[role="tab"]',
+  );
+  if (
+    !target ||
+    !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)
+  )
+    return;
+  const tabs = [
+    ...document.querySelectorAll<HTMLButtonElement>('[role="tab"]'),
+  ];
+  const index = tabs.indexOf(target);
+  const next =
+    event.key === "Home"
+      ? 0
+      : event.key === "End"
+        ? tabs.length - 1
+        : (index + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) %
+          tabs.length;
+  event.preventDefault();
+  tabs[next]?.click();
+});
+window.addEventListener("beforeunload", (event) => {
+  if (drafts.dirty) {
+    event.preventDefault();
+    event.returnValue = "";
+  }
+});
 document.addEventListener("click", (event) => {
   const element = (event.target as Element).closest<HTMLElement>(
     "[data-page],[data-tab],[data-action]",
@@ -478,7 +570,8 @@ document.addEventListener("click", (event) => {
   }
   if (element.dataset.tab) {
     tab = element.dataset.tab;
-    render();
+    navigate("live/" + tab, true, false);
+    document.querySelector<HTMLButtonElement>(`[data-tab="${tab}"]`)?.focus();
     return;
   }
   if (element instanceof HTMLButtonElement && element.disabled) return;
@@ -486,7 +579,9 @@ document.addEventListener("click", (event) => {
   pending.add(element);
   element.setAttribute("disabled", "");
   void action(element.dataset.action!, element)
-    .catch((e) => toast(e.message, true))
+    .catch((e) => {
+      if (e.name !== "AbortError") toast(e.message, true);
+    })
     .finally(() => {
       pending.delete(element);
       if (!previouslyDisabled) element.removeAttribute("disabled");
@@ -514,13 +609,34 @@ document.addEventListener("change", (event) => {
         if (ids.includes(l.value) && !l.disabled) l.checked = el.checked;
       });
   }
+  if (el.dataset.group || el.name === "lights") syncSelection(inventory);
+  if (el.form && state) {
+    drafts.capture(el.form);
+    drafts.warnings($("#main"), state.settings.revision);
+  }
   if (el.id === "journal-session")
-    void api<RaceEvent[]>("/journal?session=" + encodeURIComponent(el.value))
-      .then((rows) => ($("#journal-list").innerHTML = logs(rows, 1000)))
-      .catch((e) => toast(e.message, true));
+    void viewApi<RaceEvent[]>(
+      "/journal?session=" + encodeURIComponent(el.value),
+    )
+      .then((rows) => {
+        const list = document.querySelector("#journal-list");
+        if (
+          list &&
+          document.querySelector<HTMLSelectElement>("#journal-session")
+            ?.value === el.value
+        )
+          list.innerHTML = logs(rows, 1000);
+      })
+      .catch((e) => {
+        if (e.name !== "AbortError") toast(e.message, true);
+      });
 });
 document.addEventListener("input", (event) => {
   const input = event.target;
+  if (input instanceof HTMLInputElement && input.form && state) {
+    drafts.capture(input.form);
+    drafts.warnings($("#main"), state.settings.revision);
+  }
   if (input instanceof HTMLInputElement && input.name === "offset") {
     offsetDirty =
       input.value === "" ||
@@ -559,18 +675,36 @@ document.addEventListener("submit", (event) => {
     } else if (kind === "offset") {
       await saveOffset(Number(data.get("offset")));
       toast("Décalage enregistré pour les prochains événements reçus.");
+    } else if (kind === "recovery-pair" || kind === "recovery-abandon") {
+      await api(
+        kind === "recovery-pair" ? "/recovery/pair" : "/recovery/abandon",
+        "POST",
+        Object.fromEntries(data),
+      );
+      toast(
+        kind === "recovery-pair"
+          ? "Pont relié. Tu peux réessayer la récupération."
+          : "Sauvegarde archivée. La récupération a été abandonnée.",
+      );
     } else if (kind === "pair") {
       await api("/hue/pair", "POST", { ip: data.get("ip") });
+      drafts.clear(form);
+      formRevision = -1;
       toast("Pont lié. Choisis maintenant tes lampes.");
       await refresh();
       render();
       return;
     } else if (kind === "selection") {
-      await api("/hue/select", "POST", {
-        lightIds: data.getAll("lights"),
-        groupIds: [],
-        entertainmentAreaId: null,
-      });
+      await api(
+        "/hue/select",
+        "POST",
+        {
+          lightIds: data.getAll("lights"),
+          groupIds: [],
+          entertainmentAreaId: null,
+        },
+        { revision: drafts.revision(form) },
+      );
       toast("Sélection enregistrée.");
     } else if (kind === "replay") {
       const [type, ...key] = String(data.get("scenario")).split(":");
@@ -581,33 +715,47 @@ document.addEventListener("submit", (event) => {
       });
       toast("Replay lancé.");
     } else if (kind === "flag") {
-      await api("/settings", "PATCH", {
-        effects: {
-          [form.dataset.flag!]: {
-            enabled: data.has("enabled"),
-            durationSeconds:
-              data.get("durationMode") === "fixed"
-                ? Number(data.get("duration"))
-                : null,
+      await api(
+        "/settings",
+        "PATCH",
+        {
+          effects: {
+            [form.dataset.flag!]: {
+              enabled: data.has("enabled"),
+              durationSeconds:
+                data.get("durationMode") === "fixed"
+                  ? Number(data.get("duration"))
+                  : null,
+            },
           },
         },
-      });
+        { revision: drafts.revision(form) },
+      );
       toast("Enregistré · actif au prochain événement.");
     } else if (kind === "preferences") {
-      await api("/settings", "PATCH", {
-        brightness: Number(data.get("brightness")),
-        transitionSeconds: Number(data.get("transitionSeconds")),
-        alertWatchdogSeconds: Number(data.get("alertWatchdogSeconds")),
-        restoreOnExit: data.has("restoreOnExit"),
-        exitOnChequered: data.has("exitOnChequered"),
-        autoLive: data.has("autoLive"),
-      });
+      await api(
+        "/settings",
+        "PATCH",
+        {
+          brightness: Math.round((Number(data.get("brightness")) * 254) / 100),
+          transitionSeconds: Number(data.get("transitionSeconds")),
+          alertWatchdogSeconds: Number(data.get("alertWatchdogSeconds")),
+          restoreOnExit: data.has("restoreOnExit"),
+          exitOnChequered: data.has("exitOnChequered"),
+          autoLive: data.has("autoLive"),
+        },
+        { revision: drafts.revision(form) },
+      );
       toast("Préférences enregistrées.");
     }
+    drafts.clear(form);
+    formRevision = -1;
     await refresh();
   };
   void work()
-    .catch((e) => toast(e.message, true))
+    .catch((e) => {
+      if (e.name !== "AbortError") toast(e.message, true);
+    })
     .finally(() => {
       pending.delete(form);
       if (submit) {

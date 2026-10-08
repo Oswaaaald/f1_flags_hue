@@ -36,8 +36,10 @@ internal static class SnapshotTests
             var native = HueOutput.Baseline(J("{\"on\":{\"on\":true},\"color\":{\"xy\":{\"x\":0.2,\"y\":0.3}},\"effects\":{\"status\":\"candle\"}}"));
             check(native.GetProperty("effects").GetProperty("effect").GetString() == "candle" && !native.TryGetProperty("color", out _),
                 "An active native effect is restored as its own color mode, not mixed with xy");
-            bridge.Calls.Clear(); await output.ApplyAsync(RaceFlag.GREEN, settings.Effects[RaceFlag.GREEN], settings, CancellationToken.None);
-            await output.RestoreAsync(CancellationToken.None); await output.RestoreAsync(CancellationToken.None);
+            bridge.Calls.Clear();
+            await output.ApplyAsync(RaceFlag.GREEN, settings.Effects[RaceFlag.GREEN], settings, CancellationToken.None);
+            await output.RestoreAsync(CancellationToken.None);
+            await output.RestoreAsync(CancellationToken.None);
             check(bridge.Calls.Count(c => c.Method == HttpMethod.Put && c.Path.StartsWith("clip/v2/resource/scene/")) == 1
                 && !bridge.Calls.Any(c => c.Path.StartsWith("clip/v2/resource/light/")),
                 "A baseline is recalled once for all lamps, including repeated cleanup after a fixed effect expires");
@@ -45,7 +47,8 @@ internal static class SnapshotTests
             check(bridge.Scenes.Resources.Count == 0 && store.Get<JsonElement?>("hue_snapshot") is null,
                 "Stop deletes only its temporary scene and zone and leaves no repeated-test resource accumulation");
 
-            await output.CaptureAsync(settings, CancellationToken.None); bridge.Calls.Clear();
+            await output.CaptureAsync(settings, CancellationToken.None);
+            bridge.Calls.Clear();
             bridge.Scenes.MissNextRecall = true;
             await output.RestoreAsync(CancellationToken.None);
             var recalls = bridge.Calls.Where(c => c.Method == HttpMethod.Put && c.Path.StartsWith("clip/v2/resource/scene/")).ToArray();
@@ -57,9 +60,14 @@ internal static class SnapshotTests
                 "Scene and zone remain alive until two settled light-state reads confirm restoration");
             await output.ReleaseAsync(CancellationToken.None);
 
-            await output.CaptureAsync(settings, CancellationToken.None); bridge.Scenes.MissAllRecalls = true;
+            await output.CaptureAsync(settings, CancellationToken.None);
+            bridge.Scenes.MissAllRecalls = true;
             var rejected = false;
-            try { await output.RestoreAsync(CancellationToken.None); } catch (InvalidOperationException e) { rejected = e.Message.Contains("pas confirmée"); }
+            try
+            {
+                await output.RestoreAsync(CancellationToken.None);
+            }
+            catch (InvalidOperationException e) { rejected = e.Message.Contains("pas confirmée"); }
             check(rejected && store.Get<JsonElement?>("pending_restore") is not null && bridge.Scenes.Resources.Count == 2,
                 "An unconfirmed lamp never reports Stop success or loses its original state and scene");
             bridge.Scenes.MissAllRecalls = false;
@@ -70,10 +78,15 @@ internal static class SnapshotTests
             await output.CaptureAsync(settings, CancellationToken.None);
             bridge.Scenes.RejectRecall = true;
             rejected = false;
-            try { await output.RestoreAsync(CancellationToken.None); } catch (InvalidOperationException) { rejected = true; }
+            try
+            {
+                await output.RestoreAsync(CancellationToken.None);
+            }
+            catch (InvalidOperationException) { rejected = true; }
             check(rejected && store.Get<JsonElement?>("pending_restore") is not null && store.Get<JsonElement?>("hue_snapshot") is not null,
                 "A failed scene recall preserves the original baseline and recovery lease");
-            bridge.Scenes.RejectRecall = false; bridge.Calls.Clear();
+            bridge.Scenes.RejectRecall = false;
+            bridge.Calls.Clear();
             await new HueOutput(client, store).RecoverAsync(CancellationToken.None);
             check(bridge.Calls.Count(c => c.Method == HttpMethod.Put && c.Path.StartsWith("clip/v2/resource/scene/")) == 1
                 && bridge.Scenes.Resources.Count == 0 && store.Get<JsonElement?>("pending_restore") is null,
@@ -81,17 +94,34 @@ internal static class SnapshotTests
 
             await output.CaptureAsync(settings, CancellationToken.None);
             var zone = bridge.Scenes.Resources.Values.Single(r => r["type"]!.GetValue<string>() == "zone");
-            zone["children"]!.AsArray().Add(JsonSerializer.SerializeToNode(new { rid = Bridge.Outside, rtype = "light" }));
-            bridge.Calls.Clear(); rejected = false;
-            try { await output.RestoreAsync(CancellationToken.None); } catch (InvalidOperationException) { rejected = true; }
+            zone["children"]!.AsArray().Add(JsonSerializer.SerializeToNode(new
+            {
+                rid = Bridge.Outside,
+                rtype = "light"
+            }));
+            bridge.Calls.Clear();
+            rejected = false;
+            try
+            {
+                await output.RestoreAsync(CancellationToken.None);
+            }
+            catch (InvalidOperationException) { rejected = true; }
             check(rejected && bridge.Calls.All(c => c.Method == HttpMethod.Get) && store.Get<JsonElement?>("pending_restore") is not null,
                 "An externally widened restore zone is rejected before any scene recall can affect another lamp");
-            zone["children"]!.AsArray().RemoveAt(2); await output.RestoreAsync(CancellationToken.None); await output.ReleaseAsync(CancellationToken.None);
+            zone["children"]!.AsArray().RemoveAt(2);
+            await output.RestoreAsync(CancellationToken.None);
+            await output.ReleaseAsync(CancellationToken.None);
 
             await output.CaptureAsync(settings, CancellationToken.None);
-            scene = bridge.Scene; scene["actions"]![0]!["action"]!["dimming"]!["brightness"] = 99;
-            bridge.Calls.Clear(); rejected = false;
-            try { await output.RestoreAsync(CancellationToken.None); } catch (InvalidOperationException) { rejected = true; }
+            scene = bridge.Scene;
+            scene["actions"]![0]!["action"]!["dimming"]!["brightness"] = 99;
+            bridge.Calls.Clear();
+            rejected = false;
+            try
+            {
+                await output.RestoreAsync(CancellationToken.None);
+            }
+            catch (InvalidOperationException) { rejected = true; }
             check(rejected && bridge.Calls.All(c => c.Method == HttpMethod.Get), "An edited scene state is not recalled as the original baseline");
             scene["actions"]![0]!["action"]!["dimming"]!["brightness"] = 21;
             await output.RestoreAsync(CancellationToken.None);
@@ -100,41 +130,63 @@ internal static class SnapshotTests
             check(bridge.Scenes.Resources.Count == 2, "A scene adopted or edited externally and its zone are retained during cleanup");
             bridge.Scenes.Resources.Clear();
 
-            bridge.Scenes.LoseSceneResponse = true; rejected = false;
-            try { await output.CaptureAsync(settings, CancellationToken.None); } catch (InvalidOperationException) { rejected = true; }
+            bridge.Scenes.LoseSceneResponse = true;
+            rejected = false;
+            try
+            {
+                await output.CaptureAsync(settings, CancellationToken.None);
+            }
+            catch (InvalidOperationException) { rejected = true; }
             check(rejected && bridge.Scenes.Resources.Count == 2 && store.Get<JsonElement?>("pending_restore") is not null,
                 "A scene creation whose reply is lost retains the creation token and baseline");
             await new HueOutput(client, store).RecoverAsync(CancellationToken.None);
             check(bridge.Scenes.Resources.Count == 0 && store.Get<JsonElement?>("pending_restore") is null,
                 "Recovery finds resources from a lost creation reply, replaces the incomplete snapshot and restores safely");
 
-            bridge.Scenes.Offline = true; rejected = false;
-            try { await output.CaptureAsync(settings, CancellationToken.None); } catch (InvalidOperationException e) { rejected = e.Message.Contains("hors ligne"); }
+            bridge.Scenes.Offline = true;
+            rejected = false;
+            try
+            {
+                await output.CaptureAsync(settings, CancellationToken.None);
+            }
+            catch (InvalidOperationException e) { rejected = e.Message.Contains("hors ligne"); }
             check(rejected && bridge.Scenes.Resources.Count == 0, "An offline selected lamp prevents a partial group snapshot from starting an effect");
-            bridge.Scenes.Offline = false; await new HueOutput(client, store).RecoverAsync(CancellationToken.None);
+            bridge.Scenes.Offline = false;
+            await new HueOutput(client, store).RecoverAsync(CancellationToken.None);
 
-            await output.CaptureAsync(settings, CancellationToken.None); bridge.Calls.Clear();
-            await output.ForgetAsync(CancellationToken.None); await output.ReleaseAsync(CancellationToken.None);
+            await output.CaptureAsync(settings, CancellationToken.None);
+            bridge.Calls.Clear();
+            await output.ForgetAsync(CancellationToken.None);
+            await output.ReleaseAsync(CancellationToken.None);
             check(!bridge.Calls.Any(c => c.Method == HttpMethod.Put) && bridge.Scenes.Resources.Count == 0,
                 "Disabling restore on exit still releases the temporary Hue resources without recalling the scene");
-            var single = settings with { LightIds = [B] };
-            await output.CaptureAsync(single, CancellationToken.None); bridge.Calls.Clear();
+            var single = settings with
+            {
+                LightIds = [B]
+            };
+            await output.CaptureAsync(single, CancellationToken.None);
+            bridge.Calls.Clear();
             await output.ApplyAsync(RaceFlag.GREEN, single.Effects[RaceFlag.GREEN], single, CancellationToken.None);
             var solid = J(bridge.Calls.Single().Body);
             await output.RestoreAsync(CancellationToken.None);
-            var restored = J(bridge.Calls.Last().Body);
+            var restored = J(bridge.Calls.Last(c => c.Method == HttpMethod.Put).Body);
             check(!solid.TryGetProperty("effects", out _) && restored.TryGetProperty("gradient", out _)
                 && bridge.Scenes.Resources.Count == 0, "A single-lamp flag and gradient restoration use compatible color modes without creating a zone");
             var waiting = new HueOutput(client, store);
-            await waiting.PrepareAsync(settings, CancellationToken.None); bridge.Calls.Clear();
-            await using (var engine = new EffectEngine(waiting)) await engine.StopAsync(true);
+            await waiting.PrepareAsync(settings, CancellationToken.None);
+            bridge.Calls.Clear();
+            await using (var engine = new EffectEngine(waiting))
+                await engine.StopAsync(true);
             await waiting.ReleaseAsync(CancellationToken.None);
             check(!bridge.Calls.Any(c => c.Method != HttpMethod.Get) && store.Get<JsonElement?>("pending_restore") is null,
                 "Stopping a live connection before its first flag leaves the current Hue ambiance untouched");
 
             await waiting.PrepareAsync(settings, CancellationToken.None);
+            bridge.Calls.Clear();
             bridge.Purple = true;
             await waiting.ApplyAsync(RaceFlag.SC, settings.Effects[RaceFlag.SC], settings, CancellationToken.None);
+            check(bridge.Calls.Count == 7 && bridge.Calls.Count(c => c.Path == "clip/v2/resource") == 1,
+                "Existing group discovery is prepared before the flag; capture reuses one resource read and takes seven exchanges");
             var captured = bridge.Scene["actions"]!.AsArray().Single(a => a!["target"]!["rid"]!.GetValue<string>() == B)!["action"]!;
             check(captured["color"]!["xy"]!["x"]!.GetValue<double>() == .2745 && captured["gradient"] is null,
                 "Galaxy purple selected while waiting is captured immediately before the flag, instead of the stale startup state");
@@ -144,18 +196,37 @@ internal static class SnapshotTests
             check(bridge.Calls.Last().Method == HttpMethod.Put && J(bridge.Calls.Last().Body).GetProperty("recall").GetProperty("action").GetString() == "static",
                 "Manual scene recovery recalls only a scene and group matching the exact lamp selection");
             var sceneZone = bridge.Scenes.Resources.Values.Single(r => r["type"]!.GetValue<string>() == "zone");
-            sceneZone["children"]!.AsArray().Add(JsonSerializer.SerializeToNode(new { rid = Bridge.Outside, rtype = "light" }));
-            bridge.Calls.Clear(); rejected = false;
-            try { await client.RecallSceneAsync(sceneId, settings.LightIds, false, CancellationToken.None); } catch (ArgumentException) { rejected = true; }
+            sceneZone["children"]!.AsArray().Add(JsonSerializer.SerializeToNode(new
+            {
+                rid = Bridge.Outside,
+                rtype = "light"
+            }));
+            bridge.Calls.Clear();
+            rejected = false;
+            try
+            {
+                await client.RecallSceneAsync(sceneId, settings.LightIds, false, CancellationToken.None);
+            }
+            catch (ArgumentException) { rejected = true; }
             check(rejected && bridge.Calls.All(c => c.Method == HttpMethod.Get), "Manual scene recovery rejects a group containing any unselected lamp before writing");
             sceneZone["children"]!.AsArray().RemoveAt(2);
-            await waiting.EndAnimationAsync(CancellationToken.None); await waiting.RestoreAsync(CancellationToken.None); await waiting.ReleaseAsync(CancellationToken.None);
+            await waiting.EndAnimationAsync(CancellationToken.None);
+            await waiting.RestoreAsync(CancellationToken.None);
+            await waiting.ReleaseAsync(CancellationToken.None);
             bridge.Purple = false;
             await waiting.ApplyAsync(RaceFlag.RED, settings.Effects[RaceFlag.RED], settings, CancellationToken.None);
             captured = bridge.Scene["actions"]!.AsArray().Single(a => a!["target"]!["rid"]!.GetValue<string>() == B)!["action"]!;
             check(captured["gradient"] is not null, "After a completed restoration, the next flag captures the new idle ambiance");
-            await waiting.RestoreAsync(CancellationToken.None); await waiting.ReleaseAsync(CancellationToken.None);
+            await waiting.RestoreAsync(CancellationToken.None);
+            await waiting.ReleaseAsync(CancellationToken.None);
             check(bridge.ClientCreations == 1, "Hue v1/v2 requests reuse one pinned HTTPS transport instead of opening a new connection for each command");
+            await waiting.CaptureAsync(settings, CancellationToken.None);
+            var missingScene = bridge.Scene["id"]!.GetValue<string>();
+            bridge.Scenes.Resources.Remove(missingScene);
+            await waiting.RestoreAsync(CancellationToken.None);
+            check(bridge.Scene["id"]!.GetValue<string>() != missingScene && store.Get<JsonElement?>("pending_restore") is null,
+                "A deleted temporary scene is recreated from the explicit original lamps and confirmed before clearing recovery");
+            await waiting.ReleaseAsync(CancellationToken.None);
         }
         finally { Directory.Delete(directory, true); }
     }
@@ -169,7 +240,8 @@ internal static class SnapshotTests
         public JsonObject Scene => Scenes.Resources.Values.Single(r => r["type"]!.GetValue<string>() == "scene");
         public HueClient Client() => new(new MemoryVault(), (_, pin, _) =>
         {
-            if (pin != "test-pin") throw new Exception("Snapshot requests must keep certificate pinning");
+            if (pin != "test-pin")
+                throw new Exception("Snapshot requests must keep certificate pinning");
             ClientCreations++;
             return new HttpClient(new Handler(Reply)) { BaseAddress = new Uri("https://192.168.1.20/") };
         });
@@ -187,12 +259,22 @@ internal static class SnapshotTests
             {
                 var changed = JsonSerializer.SerializeToNode(lights[1])!.AsObject();
                 changed.Remove("gradient");
-                changed["color"] = JsonSerializer.SerializeToNode(new { xy = new { x = .2745, y = .1326 } });
+                changed["color"] = JsonSerializer.SerializeToNode(new
+                {
+                    xy = new
+                    {
+                        x = .2745,
+                        y = .1326
+                    }
+                });
                 lights[1] = changed;
             }
             var response = path.StartsWith("clip/") ? Scenes.Reply(path, request.Method, body, lights)
                 : path == "groups" ? "{\"7\":{\"lights\":[\"1\",\"2\"]}}" : path == "groups/7" ? "{\"lights\":[\"1\",\"2\"]}" : "[{\"success\":{\"state\":true}}]";
-            return new(HttpStatusCode.OK) { Content = new StringContent(response, System.Text.Encoding.UTF8, "application/json") };
+            return new(HttpStatusCode.OK)
+            {
+                Content = new StringContent(response, System.Text.Encoding.UTF8, "application/json")
+            };
         }
     }
     private sealed class Handler(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> send) : HttpMessageHandler

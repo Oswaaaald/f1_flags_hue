@@ -1,11 +1,12 @@
 <Project>
   <PropertyGroup>
-    <NuGetLockFilePath Condition="'$(RuntimeIdentifier)' != ''">obj/packages.$(RuntimeIdentifier).lock.json</NuGetLockFilePath>
+    <NuGetLockFilePath Condition="'$(RuntimeIdentifier)' != ''">packages.$(RuntimeIdentifier).lock.json</NuGetLockFilePath>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <AnalysisLevel>latest</AnalysisLevel>
-    <Version>2.0.0-preview.13</Version>
+    <Version>2.0.0-preview.14</Version>
   </PropertyGroup>
 </Project>

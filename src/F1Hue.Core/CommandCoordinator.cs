@@ -10,13 +10,18 @@ public sealed class CommandCoordinator : IDisposable
 
     public CancellationTokenSource Request(CancellationToken ct = default)
     {
-        lock (_sync) return CancellationTokenSource.CreateLinkedTokenSource(ct, _epoch.Token);
+        lock (_sync)
+            return CancellationTokenSource.CreateLinkedTokenSource(ct, _epoch.Token);
     }
 
     public async Task<T> RunAsync<T>(Func<CancellationToken, Task<T>> action, CancellationToken ct)
     {
         await _gate.WaitAsync(ct);
-        try { ct.ThrowIfCancellationRequested(); return await action(ct); }
+        try
+        {
+            ct.ThrowIfCancellationRequested();
+            return await action(ct);
+        }
         finally { _gate.Release(); }
     }
 
@@ -34,9 +39,17 @@ public sealed class CommandCoordinator : IDisposable
         previous.Cancel();
         previous.Dispose();
         await turn;
-        try { await stop(); }
+        try
+        {
+            await stop();
+        }
         finally { _gate.Release(); }
     }
 
-    public void Dispose() { _epoch.Cancel(); _epoch.Dispose(); _gate.Dispose(); }
+    public void Dispose()
+    {
+        _epoch.Cancel();
+        _epoch.Dispose();
+        _gate.Dispose();
+    }
 }

@@ -16,7 +16,8 @@ internal static class GroupColorTests
             var output = new HueOutput(bridge.Client(), store);
             var settings = new AppSettings { LightIds = [A, B], Brightness = 180, TransitionSeconds = .7 };
             await output.CaptureAsync(settings, CancellationToken.None);
-            var lookups = 0; var creations = 0;
+            var lookups = 0;
+            var creations = 0;
             foreach (var flag in new[] { RaceFlag.GREEN, RaceFlag.YELLOW, RaceFlag.RED, RaceFlag.SC_ENDING, RaceFlag.VSC_ENDING })
             {
                 bridge.Calls.Clear();
@@ -33,14 +34,19 @@ internal static class GroupColorTests
             }
             check(lookups == 1 && creations == 0, "An existing exact color group is reused without changing a room");
 
-            bridge.Calls.Clear(); bridge.GroupChanged = true;
+            bridge.Calls.Clear();
+            bridge.GroupChanged = true;
             var refused = false;
-            try { await output.ApplyAsync(RaceFlag.GREEN, settings.Effects[RaceFlag.GREEN], settings, CancellationToken.None); }
+            try
+            {
+                await output.ApplyAsync(RaceFlag.GREEN, settings.Effects[RaceFlag.GREEN], settings, CancellationToken.None);
+            }
             catch (InvalidOperationException e) { refused = e.Message.Contains("groupe Hue a changé"); }
             check(refused && bridge.Calls.All(c => c.Method == HttpMethod.Get),
                 "A cached color group widened outside the app is rejected before sending a color");
             bridge.GroupChanged = false;
-            bridge.Calls.Clear(); await output.RestoreAsync(CancellationToken.None);
+            bridge.Calls.Clear();
+            await output.RestoreAsync(CancellationToken.None);
             check(bridge.Calls.Count(c => c.Method == HttpMethod.Put && c.Path.StartsWith("clip/v2/resource/scene/")) == 1
                 && !bridge.Calls.Any(c => c.Path.StartsWith("clip/v2/resource/light/"))
                 && store.Get<Dictionary<string, JsonElement>>("pending_restore") is null,
@@ -48,7 +54,8 @@ internal static class GroupColorTests
 
             output = new HueOutput(bridge.Client(), store);
             await output.CaptureAsync(settings, CancellationToken.None);
-            bridge.Calls.Clear(); bridge.HasExactGroup = false;
+            bridge.Calls.Clear();
+            bridge.HasExactGroup = false;
             await output.ApplyAsync(RaceFlag.GREEN, settings.Effects[RaceFlag.GREEN], settings, CancellationToken.None);
             var creation = bridge.Calls.Single(c => c.Method == HttpMethod.Post);
             check(creation.Path == "groups" && JsonSerializer.Deserialize<JsonElement>(creation.Body).GetProperty("lights")
@@ -57,18 +64,33 @@ internal static class GroupColorTests
                 && !bridge.Calls.Any(c => c.Path.StartsWith("groups/0") || c.Path.StartsWith("groups/8")),
                 "Missing color group creates an exact selection and never commands all lamps or a wider room");
 
-            bridge.Calls.Clear(); bridge.RejectColor = true;
+            bridge.Calls.Clear();
+            bridge.RejectColor = true;
             refused = false;
-            try { await output.ApplyAsync(RaceFlag.RED, settings.Effects[RaceFlag.RED], settings, CancellationToken.None); }
+            try
+            {
+                await output.ApplyAsync(RaceFlag.RED, settings.Effects[RaceFlag.RED], settings, CancellationToken.None);
+            }
             catch (InvalidOperationException e) { refused = e.Message.Contains("refusée") && !e.Message.Contains("private-test-key"); }
             check(refused && store.Get<Dictionary<string, JsonElement>>("pending_restore") is not null,
                 "A grouped-color bridge error is surfaced with its key masked and restoration preserved");
-            bridge.RejectColor = false; await output.RestoreAsync(CancellationToken.None);
+            bridge.RejectColor = false;
+            await output.RestoreAsync(CancellationToken.None);
 
-            await output.CaptureAsync(settings, CancellationToken.None); bridge.Calls.Clear();
+            await output.CaptureAsync(settings, CancellationToken.None);
+            bridge.Calls.Clear();
             await using (var engine = new EffectEngine(output))
             {
-                var shortGreen = settings with { Effects = new(settings.Effects) { [RaceFlag.GREEN] = settings.Effects[RaceFlag.GREEN] with { DurationSeconds = .1 } } };
+                var shortGreen = settings with
+                {
+                    Effects = new(settings.Effects)
+                    {
+                        [RaceFlag.GREEN] = settings.Effects[RaceFlag.GREEN] with
+                        {
+                            DurationSeconds = .1
+                        }
+                    }
+                };
                 await engine.PlayAsync(RaceFlag.GREEN, shortGreen);
                 await engine.Completion.WaitAsync(TimeSpan.FromSeconds(2));
                 check(engine.Active is null && bridge.Calls.Count(c => c.Method == HttpMethod.Put && c.Path == "groups/7/action") == 1
@@ -79,8 +101,12 @@ internal static class GroupColorTests
 
             output = new HueOutput(bridge.Client(), store);
             bridge.OmitLegacy = true;
-            var single = settings with { LightIds = [A] };
-            await output.CaptureAsync(single, CancellationToken.None); bridge.Calls.Clear();
+            var single = settings with
+            {
+                LightIds = [A]
+            };
+            await output.CaptureAsync(single, CancellationToken.None);
+            bridge.Calls.Clear();
             await output.ApplyAsync(RaceFlag.GREEN, single.Effects[RaceFlag.GREEN], single, CancellationToken.None);
             check(bridge.Calls.Count == 1 && bridge.Calls.Single().Path == "clip/v2/resource/light/" + A,
                 "One chosen lamp retains a single v2 color command without requiring a legacy group");
@@ -95,7 +121,8 @@ internal static class GroupColorTests
         private readonly SceneBridge Scenes = new();
         public HueClient Client() => new(new MemoryVault(), (_, pin, _) =>
         {
-            if (pin != "test-pin") throw new Exception("Grouped colors must retain certificate pinning");
+            if (pin != "test-pin")
+                throw new Exception("Grouped colors must retain certificate pinning");
             return new HttpClient(new Handler(Reply)) { BaseAddress = new Uri("https://192.168.1.20/") };
         });
         private async Task<HttpResponseMessage> Reply(HttpRequestMessage request, CancellationToken ct)
@@ -112,14 +139,49 @@ internal static class GroupColorTests
             else if (path == "groups" && request.Method == HttpMethod.Get)
                 response = HasExactGroup ? "{\"0\":{\"lights\":[\"1\",\"2\"]},\"8\":{\"lights\":[\"1\",\"2\",\"3\"]},\"7\":{\"lights\":[\"1\",\"2\"]}}"
                     : "{\"0\":{\"lights\":[\"1\",\"2\"]},\"8\":{\"lights\":[\"1\",\"2\",\"3\"]}}";
-            else if (path == "groups" && request.Method == HttpMethod.Post) { HasExactGroup = true; response = "[{\"success\":{\"id\":\"7\"}}]"; }
-            else if (path == "groups/7") response = GroupChanged ? "{\"lights\":[\"1\",\"2\",\"3\"]}" : "{\"lights\":[\"1\",\"2\"]}";
-            else if (RejectColor && path == "groups/7/action") response = "[{\"error\":{\"type\":7,\"description\":\"rejected /api/private-test-key/\"}}]";
-            else response = "[{\"success\":{\"state\":true}}]";
-            return new(HttpStatusCode.OK) { Content = new StringContent(response, System.Text.Encoding.UTF8, "application/json") };
+            else if (path == "groups" && request.Method == HttpMethod.Post)
+            {
+                HasExactGroup = true;
+                response = "[{\"success\":{\"id\":\"7\"}}]";
+            }
+            else if (path == "groups/7")
+                response = GroupChanged ? "{\"lights\":[\"1\",\"2\",\"3\"]}" : "{\"lights\":[\"1\",\"2\"]}";
+            else if (RejectColor && path == "groups/7/action")
+                response = "[{\"error\":{\"type\":7,\"description\":\"rejected /api/private-test-key/\"}}]";
+            else
+                response = "[{\"success\":{\"state\":true}}]";
+            return new(HttpStatusCode.OK)
+            {
+                Content = new StringContent(response, System.Text.Encoding.UTF8, "application/json")
+            };
         }
-        private object Light(string id, string legacy) => new { id, type = "light", owner = new { rid = SceneBridge.Device(id), rtype = "device" }, id_v1 = OmitLegacy ? null : "/lights/" + legacy,
-            on = new { on = true }, dimming = new { brightness = 42 }, color = new { xy = new { x = .3, y = .4 } } };
+        private object Light(string id, string legacy) => new
+        {
+            id,
+            type = "light",
+            owner = new
+            {
+                rid = SceneBridge.Device(id),
+                rtype = "device"
+            },
+            id_v1 = OmitLegacy ? null : "/lights/" + legacy,
+            on = new
+            {
+                on = true
+            },
+            dimming = new
+            {
+                brightness = 42
+            },
+            color = new
+            {
+                xy = new
+                {
+                    x = .3,
+                    y = .4
+                }
+            }
+        };
     }
     private sealed class Handler(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> send) : HttpMessageHandler
     {

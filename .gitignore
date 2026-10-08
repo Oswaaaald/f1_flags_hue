@@ -34,3 +34,5 @@ artifacts/
 *.user
 *.pfx
 *.p12
+apps/web/test-results/
+apps/web/playwright-report/

@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../../src/F1Hue.Infrastructure/F1Hue.Infrastructure.csproj" />
+    <ProjectReference Include="../../../src/F1Hue.Core/F1Hue.Core.csproj" />
+  </ItemGroup>
+</Project>

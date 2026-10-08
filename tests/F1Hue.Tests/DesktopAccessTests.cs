@@ -9,7 +9,11 @@ internal static class DesktopAccessTests
     }
     private static bool Rejected(Action action)
     {
-        try { action(); return false; }
+        try
+        {
+            action();
+            return false;
+        }
         catch (Exception e) when (e is UnauthorizedAccessException or InvalidOperationException) { return true; }
     }
     public static async Task Run(Action<bool, string> check)
@@ -36,7 +40,8 @@ internal static class DesktopAccessTests
                 var outcomes = await Task.WhenAll(Enumerable.Range(0, 2).Select(_ => Task.Run(() => !Rejected(() => access.ConsumeTicket(shared)))));
                 check(outcomes.Count(accepted => accepted) == 1, "Concurrent exchanges cannot replay the same browser ticket");
                 oldTicket = access.CreateTicket(secret);
-                for (var i = 1; i < 20; i++) access.CreateTicket(secret);
+                for (var i = 1; i < 20; i++)
+                    access.CreateTicket(secret);
                 check(Rejected(() => access.CreateTicket(secret)), "Outstanding desktop tickets are bounded");
                 clock.Now = clock.Now.AddMinutes(1);
                 check(access.CreateTicket(secret).Length == 64, "Expired tickets release their capacity");

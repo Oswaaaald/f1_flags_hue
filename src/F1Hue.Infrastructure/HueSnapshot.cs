@@ -18,10 +18,11 @@ internal sealed class HueSnapshot(HueClient client, Store store, TimeProvider? t
     private const string SceneName = "F1 Hue Sync · état initial";
     private static bool SameSet(IEnumerable<string?> actual, IEnumerable<string> wanted) => actual.ToHashSet().SetEquals(wanted);
 
-    public async Task PrepareAsync(Dictionary<string, JsonElement> baseline, CancellationToken ct)
+    public async Task PrepareAsync(Dictionary<string, JsonElement> baseline, CancellationToken ct, JsonElement? knownResources = null)
     {
-        if (store.Get<HueSnapshotLease>(Key) is not null) throw new InvalidOperationException("Termine le nettoyage Hue avant de lancer un effet.");
-        var resources = Items(await client.RequestAsync(HttpMethod.Get, "", null, ct));
+        if (store.Get<HueSnapshotLease>(Key) is not null)
+            throw new InvalidOperationException("Termine le nettoyage Hue avant de lancer un effet.");
+        var resources = Items(knownResources ?? await client.RequestAsync(HttpMethod.Get, "", null, ct));
         var ids = baseline.Keys.ToArray();
         var selected = resources.Where(r => r.GetProperty("type").GetString() == "light" && baseline.ContainsKey(Id(r))).ToArray();
         if (selected.Length != ids.Length || selected.Any(r => !r.TryGetProperty("owner", out _)))
@@ -30,40 +31,68 @@ internal sealed class HueSnapshot(HueClient client, Store store, TimeProvider? t
         var disconnected = resources.Where(r => r.GetProperty("type").GetString() == "zigbee_connectivity"
             && devices.Contains(r.GetProperty("owner").GetProperty("rid").GetString())
             && r.GetProperty("status").GetString() != "connected").Any();
-        if (disconnected) throw new InvalidOperationException("Une lampe sélectionnée est hors ligne. Reconnecte-la avant de lancer un effet.");
+        if (disconnected)
+            throw new InvalidOperationException("Une lampe sélectionnée est hors ligne. Reconnecte-la avant de lancer un effet.");
         var lease = new HueSnapshotLease(Convert.ToHexString(RandomNumberGenerator.GetBytes(8)), ids, baseline);
         store.Put(Key, lease); // A cancelled creation may have reached the bridge.
         var zone = Items(await client.RequestAsync(HttpMethod.Post, "/zone", new
         {
-            metadata = new { name = Name(lease), archetype = "other" },
+            metadata = new
+            {
+                name = Name(lease),
+                archetype = "other"
+            },
             // Unlike rooms (device children), v2 zones contain light services.
             children = ids.Select(id => new { rid = id, rtype = "light" }),
         }, ct)).Single();
         var zoneId = zone.GetProperty("rid").GetString()!;
-        if (!Guid.TryParse(zoneId, out _)) throw new InvalidOperationException("Zone de restauration Hue invalide.");
-        lease = lease with { Zone = zoneId }; store.Put(Key, lease);
+        if (!Guid.TryParse(zoneId, out _))
+            throw new InvalidOperationException("Zone de restauration Hue invalide.");
+        lease = lease with
+        {
+            Zone = zoneId
+        };
+        store.Put(Key, lease);
         var created = Items(await client.RequestAsync(HttpMethod.Post, "/scene", new
         {
-            metadata = new { name = SceneName, appdata = lease.Tag },
-            group = new { rid = lease.Zone, rtype = "zone" }, auto_dynamic = false,
+            metadata = new
+            {
+                name = SceneName,
+                appdata = lease.Tag
+            },
+            group = new
+            {
+                rid = lease.Zone,
+                rtype = "zone"
+            },
+            auto_dynamic = false,
             actions = baseline.Select(l => new { target = new { rid = l.Key, rtype = "light" }, action = l.Value }),
         }, ct)).Single();
         var sceneId = created.GetProperty("rid").GetString()!;
-        if (!Guid.TryParse(sceneId, out _)) throw new InvalidOperationException("Scène de restauration Hue invalide.");
-        lease = lease with { Scene = sceneId }; store.Put(Key, lease);
+        if (!Guid.TryParse(sceneId, out _))
+            throw new InvalidOperationException("Scène de restauration Hue invalide.");
+        lease = lease with
+        {
+            Scene = sceneId
+        };
+        store.Put(Key, lease);
         await ValidateAsync(lease, baseline, ct);
     }
 
     private async Task ValidateAsync(HueSnapshotLease lease, Dictionary<string, JsonElement> baseline, CancellationToken ct)
     {
-        var zones = Items(await client.RequestAsync(HttpMethod.Get, "/zone/" + lease.Zone, null, ct));
+        var responses = await Task.WhenAll(client.RequestAsync(HttpMethod.Get, "/zone/" + lease.Zone, null, ct),
+            client.RequestAsync(HttpMethod.Get, "/scene/" + lease.Scene, null, ct));
+        var zones = Items(responses[0]);
+        if (zones.Length == 0 || Items(responses[1]).Length == 0)
+            throw new HueResourceMissingException();
         var zone = zones.Single();
         if (zone.GetProperty("metadata").GetProperty("name").GetString() != Name(lease)
             || zone.GetProperty("children").EnumerateArray().Any(c => c.GetProperty("rtype").GetString() != "light")
             || !SameSet(zone.GetProperty("children").EnumerateArray()
                 .Select(c => c.GetProperty("rid").GetString()), lease.Lights))
             throw new InvalidOperationException("La zone de restauration Hue a été modifiée. Arrête le mode.");
-        var scene = Items(await client.RequestAsync(HttpMethod.Get, "/scene/" + lease.Scene, null, ct)).Single();
+        var scene = Items(responses[1]).Single();
         if (!OwnedScene(scene, lease, baseline))
             throw new InvalidOperationException("La scène de restauration Hue a été modifiée. Aucun rappel élargi n’a été envoyé.");
     }
@@ -84,7 +113,8 @@ internal sealed class HueSnapshot(HueClient client, Store store, TimeProvider? t
 
     private static bool ContainsState(JsonElement actual, JsonElement expected)
     {
-        if (actual.ValueKind != expected.ValueKind) return false;
+        if (actual.ValueKind != expected.ValueKind)
+            return false;
         return expected.ValueKind switch
         {
             JsonValueKind.Object => expected.EnumerateObject().All(p => actual.TryGetProperty(p.Name, out var value) && ContainsState(value, p.Value)),
@@ -98,17 +128,27 @@ internal sealed class HueSnapshot(HueClient client, Store store, TimeProvider? t
     public async Task RestoreAsync(Dictionary<string, JsonElement> baseline, CancellationToken ct)
     {
         var lease = store.Get<HueSnapshotLease>(Key) ?? throw new InvalidOperationException("Scène de restauration Hue manquante.");
-        if (lease.Scene is null || lease.Zone is null) throw new InvalidOperationException("La préparation de la restauration Hue est incomplète.");
+        if (lease.Scene is null || lease.Zone is null)
+            throw new InvalidOperationException("La préparation de la restauration Hue est incomplète.");
         for (var attempt = 0; attempt < 3; attempt++)
         {
             await ValidateAsync(lease, baseline, ct);
-            await client.RequestAsync(HttpMethod.Put, "/scene/" + lease.Scene, new { recall = new { action = "active", duration = 400 } }, ct);
+            await client.RequestAsync(HttpMethod.Put, "/scene/" + lease.Scene, new
+            {
+                recall = new
+                {
+                    action = "active",
+                    duration = 400
+                }
+            }, ct);
             // A successful HTTP response queues the Zigbee recall. Keep both
             // the scene and its group alive through the fade and any last pulse.
             await Task.Delay(TimeSpan.FromMilliseconds(650), time ?? TimeProvider.System, ct);
-            if (!await ConfirmedAsync(baseline, ct)) continue;
-            await Task.Delay(TimeSpan.FromMilliseconds(250), time ?? TimeProvider.System, ct);
-            if (await ConfirmedAsync(baseline, ct)) return;
+            if (!await ConfirmedAsync(baseline, ct))
+                continue;
+            await Task.Delay(TimeSpan.FromMilliseconds(350), time ?? TimeProvider.System, ct);
+            if (await ConfirmedAsync(baseline, ct))
+                return;
         }
         throw new InvalidOperationException("La restauration d’une lampe n’est pas confirmée par le pont. L’état initial est conservé : réessaie Stop.");
     }
@@ -127,7 +167,8 @@ internal sealed class HueSnapshot(HueClient client, Store store, TimeProvider? t
     }
     private static bool SameState(JsonElement actual, JsonElement wanted, string property = "")
     {
-        if (actual.ValueKind != wanted.ValueKind) return false;
+        if (actual.ValueKind != wanted.ValueKind)
+            return false;
         return wanted.ValueKind switch
         {
             JsonValueKind.Object => wanted.EnumerateObject().All(p => actual.TryGetProperty(p.Name, out var value) && SameState(value, p.Value, p.Name)),
@@ -142,12 +183,14 @@ internal sealed class HueSnapshot(HueClient client, Store store, TimeProvider? t
 
     public async Task ReleaseAsync(CancellationToken ct)
     {
-        if (store.Get<HueSnapshotLease>(Key) is not { } lease) return;
+        if (store.Get<HueSnapshotLease>(Key) is not { } lease)
+            return;
         // Discover resources by the creation token as well: a response could
         // have been lost before its ID was saved. Never delete another scene.
         var resources = Items(await client.RequestAsync(HttpMethod.Get, "", null, ct));
         var scenes = resources.Where(r => r.GetProperty("type").GetString() == "scene" && OwnedScene(r, lease, lease.States)).ToArray();
-        foreach (var scene in scenes) await client.RequestAsync(HttpMethod.Delete, "/scene/" + Id(scene), null, ct);
+        foreach (var scene in scenes)
+            await client.RequestAsync(HttpMethod.Delete, "/scene/" + Id(scene), null, ct);
         var zones = resources.Where(r => r.GetProperty("type").GetString() == "zone"
             && r.GetProperty("metadata").GetProperty("name").GetString() == Name(lease)).ToArray();
         foreach (var zone in zones)
@@ -157,7 +200,8 @@ internal sealed class HueSnapshot(HueClient client, Store store, TimeProvider? t
             if (zone.GetProperty("children").EnumerateArray().Any(c => c.GetProperty("rtype").GetString() != "light")
                 || !SameSet(zone.GetProperty("children").EnumerateArray().Select(c => c.GetProperty("rid").GetString()), lease.Lights)
                 || resources.Any(r => r.GetProperty("type").GetString() == "scene"
-                    && r.GetProperty("group").GetProperty("rid").GetString() == zoneId && !scenes.Any(s => Id(s) == Id(r)))) continue;
+                    && r.GetProperty("group").GetProperty("rid").GetString() == zoneId && !scenes.Any(s => Id(s) == Id(r))))
+                continue;
             await client.RequestAsync(HttpMethod.Delete, "/zone/" + zoneId, null, ct);
         }
         store.Delete(Key);

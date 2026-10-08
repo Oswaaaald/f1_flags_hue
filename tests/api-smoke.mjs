@@ -116,7 +116,7 @@ try{
  await Promise.all(Array.from({length:10},()=>req('/api/calibration/adjust','POST',{deltaSeconds:.1})));
  const adjusted=(await req('/api/settings')).body;
  state=(await req('/api/state')).body;
- assert.deepEqual({...adjusted,offsetSeconds:beforeOffset.offsetSeconds},beforeOffset);
+ assert.deepEqual({...adjusted,revision:beforeOffset.revision,offsetSeconds:beforeOffset.offsetSeconds},beforeOffset);
  check(adjusted.offsetSeconds===42.5&&state.runner.running&&state.runner.mode==='live'&&state.runner.lastFlag==='RED','Concurrent fine adjustments accumulate exactly during live and preserve all other settings');
  const advanced=(await req('/api/calibration/adjust','POST',{deltaSeconds:-.5})).body;
  check(advanced.offsetSeconds===42&&(await req('/api/state')).body.settings.offsetSeconds===42,'Negative adjustment advances effects and persists the new offset');

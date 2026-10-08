@@ -1,6 +1,7 @@
 name: Verify
 on:
   push:
+    branches: ['**']
   pull_request:
   workflow_call:
 permissions:
@@ -16,22 +17,39 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
-          dotnet-version: 10.0.x
-      - uses: actions/setup-node@v4
+          global-json-file: global.json
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: apps/web/package-lock.json
       - run: scripts/build.sh
+      - run: node scripts/check-contracts.mjs
+      - run: scripts/dotnet.sh format whitespace F1Hue.slnx --no-restore --verify-no-changes
+      - run: node scripts/check-release-tag.mjs
+      - run: node tests/audit-api.mjs
       - run: npm run format:check --prefix apps/web
       - run: node tests/api-smoke.mjs
         env:
           F1_HUE_TEST_BUILD: Release
       - run: node tests/desktop-auth.mjs
-      - uses: actions/setup-python@v5
+      - if: runner.os == 'Linux'
+        run: |
+          cd apps/web
+          npx --no-install playwright install --with-deps chromium firefox webkit
+          npm run test:e2e
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: failure() && runner.os == 'Linux'
+        with:
+          name: browser-test-failures
+          path: apps/web/test-results/
+          retention-days: 7
+      - if: runner.os == 'Linux'
+        run: node tests/linux-installer.mjs
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.12'
       - run: pip install -r requirements.txt
@@ -45,4 +63,22 @@ jobs:
           pip install pip-audit
           pip-audit -r requirements.txt
       - if: runner.os == 'Linux'
-        run: docker build -f deploy/docker/Dockerfile -t f1-hue:test .
+        run: |
+          docker build -f deploy/docker/Dockerfile -t f1-hue:test .
+          node tests/docker-lifecycle.mjs
+      - uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        if: runner.os == 'Linux'
+        with:
+          image: f1-hue:test
+          syft-version: v1.54.1
+          output-file: container.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - uses: anchore/scan-action@1638637db639e0ade3258b51db49a9a137574c3e # v6
+        if: runner.os == 'Linux'
+        with:
+          sbom: container.spdx.json
+          grype-version: v0.120.1
+          severity-cutoff: high
+          output-format: json
+          output-file: vulnerability-report.json

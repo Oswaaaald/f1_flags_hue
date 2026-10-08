@@ -1,0 +1,56 @@
+name: Scheduled security audit
+on:
+  schedule:
+    - cron: '20 7 * * 1'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  dependencies:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          global-json-file: global.json
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - run: |
+          dotnet restore F1Hue.slnx --locked-mode
+          node scripts/audit-dotnet.mjs
+          npm ci --prefix apps/web
+          npm audit --prefix apps/web
+          pip install pip-audit
+          pip-audit -r requirements.txt
+      - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
+        env:
+          GITLEAKS_ENABLE_COMMENTS: false
+          GITHUB_TOKEN: ${{ github.token }}
+      - run: docker build -f deploy/docker/Dockerfile -t f1-hue:security .
+      - uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          image: f1-hue:security
+          syft-version: v1.54.1
+          output-file: container.spdx.json
+          upload-release-assets: false
+      - uses: anchore/scan-action@1638637db639e0ade3258b51db49a9a137574c3e # v6
+        with:
+          sbom: container.spdx.json
+          grype-version: v0.120.1
+          severity-cutoff: high
+          output-format: json
+          output-file: vulnerability-report.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: security-reports
+          path: |
+            container.spdx.json
+            vulnerability-report.json
+          retention-days: 30

@@ -18,23 +18,39 @@ internal sealed class SceneBridge
             var light = lightNodes.Single(l => l!["id"]!.GetValue<string>() == _unrestored)!.AsObject();
             light["on"] = new JsonObject { ["on"] = true };
             light["color"] = new JsonObject { ["xy"] = new JsonObject { ["x"] = .545, ["y"] = .455 } };
-            light.Remove("gradient"); light.Remove("effects"); light.Remove("color_temperature");
+            light.Remove("gradient");
+            light.Remove("effects");
+            light.Remove("color_temperature");
         }
         var all = lightNodes.Select(l => l!.DeepClone()).Concat(lightNodes.Select(l => JsonSerializer.SerializeToNode(new
         {
-            id = Device(l!["id"]!.GetValue<string>()), type = "device",
+            id = Device(l!["id"]!.GetValue<string>()),
+            type = "device",
             services = new[] { new { rid = l["id"]!.GetValue<string>(), rtype = "light" } },
         })!)).Concat(Resources.Values.Select(r => r.DeepClone())).ToList();
         if (Offline)
-            all.Add(JsonSerializer.SerializeToNode(new { id = Guid.NewGuid().ToString(), type = "zigbee_connectivity",
-                owner = new { rid = Device(lightNodes[0]!["id"]!.GetValue<string>()), rtype = "device" }, status = "disconnected" })!);
+            all.Add(JsonSerializer.SerializeToNode(new
+            {
+                id = Guid.NewGuid().ToString(),
+                type = "zigbee_connectivity",
+                owner = new
+                {
+                    rid = Device(lightNodes[0]!["id"]!.GetValue<string>()),
+                    rtype = "device"
+                },
+                status = "disconnected"
+            })!);
         const string prefix = "clip/v2/resource";
         var route = path[prefix.Length..];
         if (method == HttpMethod.Get)
         {
             var selected = route == "" ? all : route == "/light" ? lightNodes.Select(l => l!.DeepClone()).ToList()
                 : all.Where(r => route == "/" + r["type"]!.GetValue<string>() + "/" + r["id"]!.GetValue<string>()).ToList();
-            return JsonSerializer.Serialize(new { errors = Array.Empty<object>(), data = selected });
+            return JsonSerializer.Serialize(new
+            {
+                errors = Array.Empty<object>(),
+                data = selected
+            });
         }
         if (method == HttpMethod.Post && route is "/zone" or "/scene")
         {
@@ -45,12 +61,23 @@ internal sealed class SceneBridge
             {
                 var action = item!["action"]!.AsObject();
                 return new[] { "color", "color_temperature", "gradient", "effects" }.Count(action.ContainsKey) > 1;
-            })) return "{\"errors\":[{\"description\":\"Scene color modes cannot be combined\"}],\"data\":[]}";
-            var id = Guid.NewGuid().ToString(); var type = route[1..];
-            resource["id"] = id; resource["type"] = type; Resources[id] = resource;
+            }))
+                return "{\"errors\":[{\"description\":\"Scene color modes cannot be combined\"}],\"data\":[]}";
+            var id = Guid.NewGuid().ToString();
+            var type = route[1..];
+            resource["id"] = id;
+            resource["type"] = type;
+            Resources[id] = resource;
             if (route == "/scene" && LoseSceneResponse)
-            { LoseSceneResponse = false; return "{\"errors\":[{\"description\":\"lost creation reply\"}],\"data\":[]}"; }
-            return JsonSerializer.Serialize(new { errors = Array.Empty<object>(), data = new[] { new { rid = id, rtype = type } } });
+            {
+                LoseSceneResponse = false;
+                return "{\"errors\":[{\"description\":\"lost creation reply\"}],\"data\":[]}";
+            }
+            return JsonSerializer.Serialize(new
+            {
+                errors = Array.Empty<object>(),
+                data = new[] { new { rid = id, rtype = type } }
+            });
         }
         if (method == HttpMethod.Put && route.StartsWith("/scene/") && RejectRecall)
             return "{\"errors\":[{\"description\":\"recall unavailable\"}],\"data\":[]}";
@@ -60,7 +87,8 @@ internal sealed class SceneBridge
                 ? Resources[route.Split('/')[2]]["actions"]!.AsArray().Last()!["target"]!["rid"]!.GetValue<string>() : null;
             MissNextRecall = false;
         }
-        if (method == HttpMethod.Delete) Resources.Remove(route.Split('/')[2]);
+        if (method == HttpMethod.Delete)
+            Resources.Remove(route.Split('/')[2]);
         return "{\"errors\":[],\"data\":[]}";
     }
 }

@@ -91,6 +91,12 @@ web-legacy:
 
 web-run: web
 
+.PHONY: contracts
+contracts:
+	@scripts/dotnet.sh build apps/host -c Release -p:UseSharedCompilation=false -m:1
+	@scripts/dotnet.sh apps/host/bin/Release/net10.0/f1-hue.dll --export-contract "$(CURDIR)/apps/web/src/types.ts"
+	@cd apps/web && npx --no-install prettier --write src/types.ts
+
 # ---- SETUP -------------------------------------------------------------------
 
 setup-wizard:

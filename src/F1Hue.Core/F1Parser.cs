@@ -11,9 +11,23 @@ public sealed class F1Parser(TimeProvider? time = null)
     private string? _trackFlag;
     private string? _neutralisation;
     private readonly HashSet<string> _yellowSectors = [];
-    public FeedState State { get { lock (_sync) return _state; } }
+    public FeedState State
+    {
+        get
+        {
+            lock (_sync)
+                return _state;
+        }
+    }
     public void Connection(bool connected, string? error = null)
-    { lock (_sync) _state = _state with { Connected = connected, LastError = error }; }
+    {
+        lock (_sync)
+            _state = _state with
+            {
+                Connected = connected,
+                LastError = error
+            };
+    }
     private static string? Text(JsonElement obj, string key) => obj.ValueKind == JsonValueKind.Object && obj.TryGetProperty(key, out var v) && v.ValueKind is not (JsonValueKind.Null or JsonValueKind.Undefined) ? v.ToString() : null;
     private static JsonElement Child(JsonElement obj, string key) => obj.ValueKind == JsonValueKind.Object && obj.TryGetProperty(key, out var v) ? v : default;
     private static int? Integer(JsonElement obj, string key) => int.TryParse(Text(obj, key), out var n) ? n : null;
@@ -29,8 +43,23 @@ public sealed class F1Parser(TimeProvider? time = null)
             Lap(Child(snapshot, "LapCount"), true, events);
             Clock(Child(snapshot, "ExtrapolatedClock"));
             var track = Text(Child(snapshot, "TrackStatus"), "Status");
-            TrackFlag(Track(track), true, events);
-            _state = _state with { LastDataAt = _time.GetUtcNow() };
+            var flag = Track(track);
+            // Only refine a current neutralisation. Historic blue/yellow/red
+            // messages must never override an authoritative current green.
+            var history = new F1Parser(_time) { _state = _state with { LastFlag = null } };
+            var control = Child(snapshot, "RaceControlMessages");
+            if (control.ValueKind == JsonValueKind.Object)
+                history.Update("RaceControlMessages", JsonSerializer.SerializeToElement(control.EnumerateObject()
+                    .Where(p => p.Name != "_kf").ToDictionary(p => p.Name, p => p.Value)));
+            if (flag == "SC" && history._neutralisation == "SC_ENDING")
+                flag = "SC_ENDING";
+            if (flag == "VSC" && history._neutralisation == "VSC_ENDING")
+                flag = "VSC_ENDING";
+            TrackFlag(flag, true, events);
+            _state = _state with
+            {
+                LastDataAt = _time.GetUtcNow()
+            };
             return events;
         }
     }
@@ -39,22 +68,31 @@ public sealed class F1Parser(TimeProvider? time = null)
         lock (_sync)
         {
             var events = new List<RaceEvent>();
-            if (payload.ValueKind != JsonValueKind.Object) return events;
+            if (payload.ValueKind != JsonValueKind.Object)
+                return events;
             switch (topic)
             {
                 case "SessionInfo":
                     SessionInfo(payload);
-                    if (Text(payload, "SessionStatus") is string status) Status(status, false, events);
+                    if (Text(payload, "SessionStatus") is string status)
+                        Status(status, false, events);
                     break;
-                case "SessionStatus": Status(Text(payload, "Status"), false, events); break;
-                case "LapCount": Lap(payload, false, events); break;
-                case "ExtrapolatedClock": Clock(payload); break;
+                case "SessionStatus":
+                    Status(Text(payload, "Status"), false, events);
+                    break;
+                case "LapCount":
+                    Lap(payload, false, events);
+                    break;
+                case "ExtrapolatedClock":
+                    Clock(payload);
+                    break;
                 case "TrackStatus":
                     var track = Text(payload, "Status");
                     TrackFlag(Track(track), false, events);
                     break;
                 case "RaceControlMessages":
-                    if (_state.SessionStatus is not ("Started" or "Aborted" or "Finished") || Text(payload, "_kf")?.Equals("true", StringComparison.OrdinalIgnoreCase) == true) break;
+                    if (_state.SessionStatus is not ("Started" or "Aborted" or "Finished") || Text(payload, "_kf")?.Equals("true", StringComparison.OrdinalIgnoreCase) == true)
+                        break;
                     var messages = Child(payload, "Messages");
                     var rows = messages.ValueKind switch
                     {
@@ -67,72 +105,120 @@ public sealed class F1Parser(TimeProvider? time = null)
                         var flag = Text(row, "Flag")?.ToUpperInvariant();
                         var category = Text(row, "Category")?.ToLowerInvariant();
                         var message = Text(row, "Message")?.ToUpperInvariant() ?? "";
-                        if (_state.SessionStatus == "Finished" && flag != "CHEQUERED") continue;
+                        if (_state.SessionStatus == "Finished" && flag != "CHEQUERED")
+                            continue;
                         if (category == "flag")
                         {
-                            if (flag == "DOUBLE YELLOW") flag = "YELLOW";
-                            if (flag is not ("GREEN" or "YELLOW" or "RED" or "BLUE" or "CHEQUERED")) continue;
+                            if (flag == "DOUBLE YELLOW")
+                                flag = "YELLOW";
+                            if (flag is not ("GREEN" or "YELLOW" or "RED" or "BLUE" or "CHEQUERED"))
+                                continue;
                         }
                         else if (category == "safetycar")
                         {
-                            if (message.Contains("VSC") || message.Contains("VIRTUAL SAFETY CAR")) flag = message.Contains("ENDING") ? "VSC_ENDING" : "VSC";
-                            else if (message.Contains("SAFETY CAR")) flag = message.Contains("ENDING") || message.Contains("IN THIS LAP") ? "SC_ENDING" : "SC";
-                            else continue;
+                            if (message.Contains("VSC") || message.Contains("VIRTUAL SAFETY CAR"))
+                                flag = message.Contains("ENDING") ? "VSC_ENDING" : "VSC";
+                            else if (message.Contains("SAFETY CAR"))
+                                flag = message.Contains("ENDING") || message.Contains("IN THIS LAP") ? "SC_ENDING" : "SC";
+                            else
+                                continue;
                         }
-                        else continue;
+                        else
+                            continue;
                         ControlFlag(flag, row, events);
                     }
                     break;
             }
-            _state = _state with { LastDataAt = _time.GetUtcNow() };
+            _state = _state with
+            {
+                LastDataAt = _time.GetUtcNow()
+            };
             return events;
         }
     }
     private void SessionInfo(JsonElement info)
     {
-        if (info.ValueKind != JsonValueKind.Object) return;
+        if (info.ValueKind != JsonValueKind.Object)
+            return;
         var key = Text(info, "Key");
         if (key is not null && key != _state.SessionKey)
         {
-            _state = _state with { LastFlag = null, CurrentLap = null, TotalLaps = null, Clock = null, SessionStatus = null };
-            _trackFlag = null; _neutralisation = null; _yellowSectors.Clear();
+            _state = _state with
+            {
+                LastFlag = null,
+                CurrentLap = null,
+                TotalLaps = null,
+                Clock = null,
+                SessionStatus = null
+            };
+            _trackFlag = null;
+            _neutralisation = null;
+            _yellowSectors.Clear();
         }
-        var name = Text(info, "Name"); var meeting = Text(Child(info, "Meeting"), "Name");
-        _state = _state with { SessionKey = key ?? _state.SessionKey, SessionName = name is null ? _state.SessionName : meeting is null ? name : meeting + " · " + name, SessionType = Text(info, "Type") ?? _state.SessionType };
+        var name = Text(info, "Name");
+        var meeting = Text(Child(info, "Meeting"), "Name");
+        _state = _state with
+        {
+            SessionKey = key ?? _state.SessionKey,
+            SessionName = name is null ? _state.SessionName : meeting is null ? name : meeting + " · " + name,
+            SessionType = Text(info, "Type") ?? _state.SessionType
+        };
     }
     private void Status(string? status, bool initial, List<RaceEvent> events)
     {
-        if (status is null) return;
-        if (status != _state.SessionStatus || initial) events.Add(Event("session_status", status, initial));
-        _state = _state with { SessionStatus = status };
+        if (status is null)
+            return;
+        if (status != _state.SessionStatus || initial)
+            events.Add(Event("session_status", status, initial));
+        _state = _state with
+        {
+            SessionStatus = status
+        };
     }
     private void Lap(JsonElement data, bool initial, List<RaceEvent> events)
     {
-        if (data.ValueKind != JsonValueKind.Object) return;
-        _state = _state with { TotalLaps = Integer(data, "TotalLaps") ?? _state.TotalLaps };
+        if (data.ValueKind != JsonValueKind.Object)
+            return;
+        _state = _state with
+        {
+            TotalLaps = Integer(data, "TotalLaps") ?? _state.TotalLaps
+        };
         var lap = Integer(data, "CurrentLap");
         if (lap is > 0 and <= 500 && lap != _state.CurrentLap)
-        { _state = _state with { CurrentLap = lap }; events.Add(Event("lap", lap.ToString(), initial)); }
+        {
+            _state = _state with
+            {
+                CurrentLap = lap
+            };
+            events.Add(Event("lap", lap.ToString(), initial));
+        }
     }
     private void Clock(JsonElement data)
     {
-        if (data.ValueKind != JsonValueKind.Object) return;
+        if (data.ValueKind != JsonValueKind.Object)
+            return;
         var previous = _state.Clock;
         var utc = SourceUtc(Text(data, "Utc")) ?? previous?.Utc;
         var extrapolating = bool.TryParse(Text(data, "Extrapolating"), out var running) ? running : previous?.Extrapolating ?? false;
-        _state = _state with { Clock = new(utc, Text(data, "Remaining") ?? previous?.Remaining, extrapolating) };
+        _state = _state with
+        {
+            Clock = new(utc, Text(data, "Remaining") ?? previous?.Remaining, extrapolating)
+        };
     }
     private static DateTimeOffset? SourceUtc(string? text) => DateTimeOffset.TryParse(text, CultureInfo.InvariantCulture,
         DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var utc) ? utc : null;
     private static bool Neutralised(string? flag) => flag is "RED" or "SC" or "SC_ENDING" or "VSC" or "VSC_ENDING";
     private void TrackFlag(string? flag, bool initial, List<RaceEvent> events)
     {
-        if (flag is null || !(_state.SessionStatus == "Started" || _state.SessionStatus == "Aborted" && flag == "RED")) return;
+        if (flag is null || !(_state.SessionStatus == "Started" || _state.SessionStatus == "Aborted" && flag == "RED"))
+            return;
         _trackFlag = flag;
         // TrackStatus often repeats SC while race control has announced its end.
-        if (flag == "SC" && _neutralisation == "SC_ENDING" || flag == "VSC" && _neutralisation == "VSC_ENDING") flag = _neutralisation;
+        if (flag == "SC" && _neutralisation == "SC_ENDING" || flag == "VSC" && _neutralisation == "VSC_ENDING")
+            flag = _neutralisation;
         _neutralisation = Neutralised(flag) ? flag : null;
-        if (flag == "GREEN") _yellowSectors.Clear();
+        if (flag == "GREEN")
+            _yellowSectors.Clear();
         Flag(flag, initial, null, events);
     }
     private void ControlFlag(string? flag, JsonElement row, List<RaceEvent> events)
@@ -144,34 +230,55 @@ public sealed class F1Parser(TimeProvider? time = null)
             || string.Equals(scope, "Driver", StringComparison.OrdinalIgnoreCase);
         if (sector is not null)
         {
-            if (flag == "YELLOW") _yellowSectors.Add(sector);
-            else if (flag == "GREEN") _yellowSectors.Remove(sector);
+            if (flag == "YELLOW")
+                _yellowSectors.Add(sector);
+            else if (flag == "GREEN")
+                _yellowSectors.Remove(sector);
         }
-        if (flag == "CHEQUERED") { _neutralisation = null; Flag(flag, false, SourceUtc(Text(row, "Utc")), events); return; }
+        if (flag == "CHEQUERED")
+        {
+            _neutralisation = null;
+            Flag(flag, false, SourceUtc(Text(row, "Utc")), events);
+            return;
+        }
         // Aborted may arrive immediately before RED. Nothing local can release it.
-        if (_state.SessionStatus == "Aborted" && flag != "RED") return;
+        if (_state.SessionStatus == "Aborted" && flag != "RED")
+            return;
         if (Neutralised(flag))
         {
-            if (local || _neutralisation == "RED" && flag != "RED") return;
+            if (local || _neutralisation == "RED" && flag != "RED")
+                return;
             _neutralisation = flag;
         }
         else
         {
             if (Neutralised(_neutralisation))
             {
-                if (local || flag != "GREEN" || !string.Equals(scope, "Track", StringComparison.OrdinalIgnoreCase)) return;
-                _neutralisation = null; _trackFlag = "GREEN"; _yellowSectors.Clear();
+                if (local || flag != "GREEN" || !string.Equals(scope, "Track", StringComparison.OrdinalIgnoreCase))
+                    return;
+                _neutralisation = null;
+                _trackFlag = "GREEN";
+                _yellowSectors.Clear();
             }
-            if (local && flag == "GREEN" && (_yellowSectors.Count > 0 || _trackFlag == "YELLOW")) return;
-            if (local && flag == "BLUE" && (_yellowSectors.Count > 0 || _trackFlag == "YELLOW")) return;
+            if (local && flag == "GREEN" && (_yellowSectors.Count > 0 || _trackFlag == "YELLOW"))
+                return;
+            if (local && flag == "BLUE" && (_yellowSectors.Count > 0 || _trackFlag == "YELLOW"))
+                return;
         }
         Flag(flag, false, SourceUtc(Text(row, "Utc")), events);
     }
     private void Flag(string? flag, bool initial, DateTimeOffset? utc, List<RaceEvent> events)
     {
-        if (flag is null || flag == _state.LastFlag) return;
-        _state = _state with { LastFlag = flag };
-        events.Add(Event("flag", flag, initial) with { SourceUtc = utc });
+        if (flag is null || flag == _state.LastFlag)
+            return;
+        _state = _state with
+        {
+            LastFlag = flag
+        };
+        events.Add(Event("flag", flag, initial) with
+        {
+            SourceUtc = utc
+        });
     }
-    private RaceEvent Event(string kind, string? value, bool initial) => new(kind, value, _state.SessionKey, _state.SessionName, _state.SessionType, _time.GetUtcNow(), _time.GetTimestamp(), Initial: initial, TotalLaps: _state.TotalLaps);
+    private RaceEvent Event(string kind, string? value, bool initial) => new(kind, value, _state.SessionKey, _state.SessionName, _state.SessionType, _time.GetUtcNow(), _time.GetTimestamp(), Initial: initial, TotalLaps: _state.TotalLaps, EventId: Guid.NewGuid().ToString("N"));
 }

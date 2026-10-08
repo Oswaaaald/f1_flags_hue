@@ -9,7 +9,7 @@ mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources/service"
 cp deploy/macos/Info.plist "$bundle/Contents/Info.plist"
 cp -R "artifacts/$target/service/." "$bundle/Contents/Resources/service/"
 if [ -n "${F1_HUE_RELEASES_URL:-}" ]; then /usr/libexec/PlistBuddy -c "Add :F1HueReleasesURL string $F1_HUE_RELEASES_URL" "$bundle/Contents/Info.plist"; fi
-swiftc deploy/macos/Launcher.swift -O -target "$arch-apple-macosx15.0" -module-cache-path "$PWD/.tools/swift-cache" -o "$bundle/Contents/MacOS/F1Hue"
+swiftc deploy/macos/Launcher.swift deploy/macos/RotatingLog.swift -O -target "$arch-apple-macosx15.0" -module-cache-path "$PWD/.tools/swift-cache" -o "$bundle/Contents/MacOS/F1Hue"
 identity="${APPLE_SIGNING_IDENTITY:--}"
 find "$bundle/Contents/Resources/service" -type f \( -name '*.dylib' -o -name 'f1-hue' -o -name 'createdump' \) -exec codesign --force --options runtime --entitlements deploy/macos/entitlements.plist --sign "$identity" '{}' \;
 codesign --force --options runtime --entitlements deploy/macos/entitlements.plist --sign "$identity" "$bundle"

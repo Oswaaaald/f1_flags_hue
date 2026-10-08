@@ -4,10 +4,13 @@ Set-Location (Join-Path $PSScriptRoot '../..')
 function Run-Native { param([string]$File,[string[]]$Arguments) & $File @Arguments; if($LASTEXITCODE -ne 0){throw "${File} failed: $LASTEXITCODE"} }
 Run-Native 'npm' @('ci','--prefix','apps/web')
 Run-Native 'npm' @('run','build','--prefix','apps/web')
+Run-Native 'node' @('scripts/check-web-build.mjs')
 $out="artifacts/$Runtime/desktop"
 if(Test-Path $out){Remove-Item $out -Recurse -Force}
-Run-Native 'dotnet' @('publish','apps/host','-c','Release','-r',$Runtime,'--self-contained','true','-o',"$out/service")
-Run-Native 'dotnet' @('publish','deploy/windows/F1Hue.Desktop.csproj','-c','Release','-r',$Runtime,'--self-contained','true','-o',$out)
+Run-Native 'dotnet' @('restore','apps/host',"-p:RuntimeIdentifier=$Runtime",'--locked-mode')
+Run-Native 'dotnet' @('publish','apps/host','--no-restore','-c','Release','-r',$Runtime,'--self-contained','true','-o',"$out/service")
+Run-Native 'dotnet' @('restore','deploy/windows/F1Hue.Desktop.csproj',"-p:RuntimeIdentifier=$Runtime",'--locked-mode')
+Run-Native 'dotnet' @('publish','deploy/windows/F1Hue.Desktop.csproj','--no-restore','-c','Release','-r',$Runtime,'--self-contained','true','-o',$out)
 if($env:F1_HUE_RELEASES_URL){Set-Content "$out/releases-url.txt" $env:F1_HUE_RELEASES_URL}
 if($env:WINDOWS_SIGNING_THUMBPRINT){
   Get-ChildItem $out -Filter *.exe -Recurse | ForEach-Object { Run-Native 'signtool' @('sign','/sha1',$env:WINDOWS_SIGNING_THUMBPRINT,'/fd','SHA256','/tr','https://timestamp.digicert.com','/td','SHA256',$_.FullName) }

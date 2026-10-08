@@ -26,8 +26,10 @@ public sealed class DesktopAccess : IDisposable
         lock (_gate)
         {
             var now = _clock.GetUtcNow();
-            foreach (var token in _tickets.Where(t => t.Value <= now).Select(t => t.Key).ToArray()) _tickets.Remove(token);
-            if (_tickets.Count >= 20) throw new InvalidOperationException("Trop d’ouvertures en attente. Réessaie dans une minute.");
+            foreach (var token in _tickets.Where(t => t.Value <= now).Select(t => t.Key).ToArray())
+                _tickets.Remove(token);
+            if (_tickets.Count >= 20)
+                throw new InvalidOperationException("Trop d’ouvertures en attente. Réessaie dans une minute.");
             var ticket = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
             _tickets.Add(Hash(ticket), now.AddMinutes(1));
             return ticket;
@@ -43,7 +45,9 @@ public sealed class DesktopAccess : IDisposable
     }
     public void Dispose()
     {
-        lock (_gate) _tickets.Clear();
-        if (File.Exists(_path) && File.ReadAllText(_path) == _secret) File.Delete(_path);
+        lock (_gate)
+            _tickets.Clear();
+        if (File.Exists(_path) && File.ReadAllText(_path) == _secret)
+            File.Delete(_path);
     }
 }

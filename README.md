@@ -2,7 +2,7 @@
 
 Synchroniser ses lampes Philips Hue avec les drapeaux F1, en tenant compte du retard de sa TV. Le service fonctionne chez soi, en arrière-plan. Aucun compte cloud propre au projet, aucun abonnement à une API de timing.
 
-La version **2.0 preview** utilise C#/.NET 10, une interface TypeScript intégrée et SQLite. La version Python reste disponible pendant la transition ; ses tests sont conservés.
+La version **2.0 preview** utilise C#/.NET 10, une interface TypeScript intégrée et SQLite. La version Python est conservée pour migration et diagnostic local ; les nouvelles fonctionnalités concernent la version 2.
 
 ## Utiliser l’application
 
@@ -55,7 +55,7 @@ Extraire le paquet correspondant puis exécuter `./install.sh`. Le service utili
 
 Les règles de drapeaux sont relues au moment de jouer chaque événement, **après** le décalage TV. L’effet déjà actif conserve sa durée initiale. Un événement désactivé termine l’effet précédent et restaure les lampes. La sélection reste verrouillée pendant un mode actif.
 
-Les clignotements utilisent `alert=lselect` (SC, VSC, damier) et `alert=select` répété pour le bleu. Le réglage **Transition** concerne les changements de couleur ; le rythme natif est fixé par les lampes. L’application renouvelle la pulsation pour les effets prolongés et envoie `alert=none` aux seules lampes choisies avant un autre drapeau ou Stop. Une annulation échouée reste réessayable et est reprise au prochain démarrage. La restauration restitue l’état statique capturé ; une animation de scène Hue externe n’est pas reconstruite.
+Les clignotements utilisent `alert=lselect` (SC, VSC, damier) et `alert=select` répété pour le bleu. Le réglage **Transition** concerne les changements de couleur ; le rythme natif est fixé par les lampes. L’application renouvelle la pulsation pour les effets prolongés et envoie `alert=none` aux seules lampes choisies avant un autre drapeau ou Stop. Une annulation échouée reste réessayable et est reprise au prochain démarrage. La restauration restitue couleurs, température, intensité, gradients et effets natifs compatibles. Une scène dynamique ou un effet avancé dont les paramètres ne sont pas restaurables est refusé avant de modifier les lampes : arrêter d’abord son animation dans Hue.
 
 L’ambiance est mémorisée juste avant le premier drapeau joué, puis renouvelée après un retour au repos. Tu peux donc choisir une scène dans Hue pendant l’attente du direct. Stop sans drapeau joué laisse les lampes intactes. Lors d’une restauration, l’application attend que le pont confirme les états des lampes et retente le rappel groupé si nécessaire.
 
@@ -85,7 +85,7 @@ Les anciens réglages spécifiques au moteur v1 (`blink_method`, répétitions d
 
 ## Développer
 
-Prérequis : SDK .NET 10, Node 20.19+ et npm. Aucun de ces outils n’est nécessaire sur les appareils qui utilisent les paquets publiés.
+Prérequis : SDK défini dans `global.json`, Node 22 et npm. Aucun de ces outils n’est nécessaire sur les appareils qui utilisent les paquets publiés.
 
 ```sh
 scripts/build.sh                  # interface + service + tests C#
@@ -104,5 +104,7 @@ scripts/publish.sh linux-arm64    # service autonome Raspberry Pi 64 bits
 ```
 
 Les workflows GitHub vérifient le moteur et les routes sur Mac, Windows et Linux. **Build installers** fabrique les six variantes, teste chaque service empaqueté sur son système et produit les installateurs Windows. Un lancement manuel conserve les artefacts ; cocher **Publier la release après validation des paquets** depuis `main`, ou pousser un tag `vVERSION` correspondant à `Directory.Build.props`, publie une release avec les sommes SHA-256 après validation de tous les jobs. Aucune signature payante n’est requise. Voir [la distribution](docs/releases.md).
+
+Voir aussi [les changements](CHANGELOG.md), [le guide de contribution](CONTRIBUTING.md), [la sécurité](SECURITY.md) et [les correctifs de l’audit](docs/audit-corrections-2026-10-08.md).
 
 Voir [l’architecture](docs/architecture.md), [l’hébergement](docs/hosting.md), [le rapport de vérification](docs/verification.md) et [l’ancienne documentation Python](docs/legacy-python.md).

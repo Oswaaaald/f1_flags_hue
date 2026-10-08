@@ -8,7 +8,10 @@ internal sealed class ProfileLease : IDisposable
     public ProfileLease(string directory)
     {
         var path = Path.Combine(directory, "service.lock");
-        try { _file = new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None); }
+        try
+        {
+            _file = new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+        }
         catch (IOException e)
         {
             throw new InvalidOperationException("Ce profil F1 Hue est déjà utilisé. Arrête l’autre instance avant de lancer le programme, ou utilise --data avec un autre dossier.", e);

@@ -37,7 +37,8 @@ static class NativePulseTests
                 check(red >= 0 && calls.Take(red).Count(c => c.Method == HttpMethod.Put && c.Path == "groups/7/action"
                         && c.Body == "{\"alert\":\"none\"}") == 1 && !calls.Any(c => c.Path.StartsWith("lights/")),
                     "Changing to red cancels the native pulse in one group command before changing color");
-                var count = bridge.Count("lselect"); await Task.Delay(160);
+                var count = bridge.Count("lselect");
+                await Task.Delay(160);
                 check(bridge.Count("lselect") == count, "No old SC renewal can overwrite the next flag");
                 await engine.StopAsync(true);
                 check(store.Get<string[]>("pending_native_alert") is null && store.Get<Dictionary<string, JsonElement>>("pending_restore") is null,
@@ -50,9 +51,14 @@ static class NativePulseTests
             {
                 await engine.PlayAsync(RaceFlag.SC, settings);
                 // The group can change outside this app. Stop must still target the saved lamps.
-                bridge.GroupChanged = true; bridge.FailStopOnce = true;
+                bridge.GroupChanged = true;
+                bridge.FailStopOnce = true;
                 var failed = false;
-                try { await engine.StopAsync(true); } catch (InvalidOperationException) { failed = true; }
+                try
+                {
+                    await engine.StopAsync(true);
+                }
+                catch (InvalidOperationException) { failed = true; }
                 check(failed && store.Get<string[]>("pending_native_alert")!.SequenceEqual(["1"])
                     && store.Get<Dictionary<string, JsonElement>>("pending_restore") is not null,
                     "Failed native stop retains only the failed lamp and keeps its original baseline");
@@ -76,7 +82,8 @@ static class NativePulseTests
                 "Restart uses the persisted exact group to stop all lamps in one command before restoring");
             await output.EndAnimationAsync(CancellationToken.None); // Dispose the original process's simulated renewal.
 
-            bridge.Calls.Clear(); bridge.BlockRenewal = true;
+            bridge.Calls.Clear();
+            bridge.BlockRenewal = true;
             var pulse = new HueNativePulse(client, store, time: new FastClock());
             await pulse.StartAsync(["1", "2"], RaceFlag.SC, settings.Effects[RaceFlag.SC], settings, CancellationToken.None);
             await bridge.RenewalEntered.Task.WaitAsync(TimeSpan.FromSeconds(2));
@@ -84,8 +91,10 @@ static class NativePulseTests
             await Task.Delay(40);
             check(!stopping.IsCompleted && !bridge.Calls.Any(c => c.Path.StartsWith("lights/") && c.Body.Contains("none")),
                 "Stop waits for an in-flight native renewal before issuing cancellation");
-            bridge.ReleaseRenewal.TrySetResult(); await stopping.WaitAsync(TimeSpan.FromSeconds(2));
-            var writesAfterStop = bridge.Calls.Count; await Task.Delay(150);
+            bridge.ReleaseRenewal.TrySetResult();
+            await stopping.WaitAsync(TimeSpan.FromSeconds(2));
+            var writesAfterStop = bridge.Calls.Count;
+            await Task.Delay(150);
             check(bridge.Calls.Count == writesAfterStop, "No renewal is sent after native Stop returns");
             bridge.BlockRenewal = false;
 
@@ -115,7 +124,8 @@ static class NativePulseTests
                 }
             }
 
-            bridge.Calls.Clear(); bridge.HasExactGroup = false;
+            bridge.Calls.Clear();
+            bridge.HasExactGroup = false;
             pulse = new HueNativePulse(client, store);
             await pulse.StartAsync(["1", "2"], RaceFlag.VSC, settings.Effects[RaceFlag.VSC], settings, CancellationToken.None);
             check(bridge.Calls.Any(c => c.Method == HttpMethod.Post && c.Path == "groups"
@@ -128,7 +138,16 @@ static class NativePulseTests
             await output.CaptureAsync(settings, CancellationToken.None);
             await using (var engine = new EffectEngine(output))
             {
-                var rules = settings with { Effects = new(settings.Effects) { [RaceFlag.CHEQUERED] = settings.Effects[RaceFlag.CHEQUERED] with { DurationSeconds = .12 } } };
+                var rules = settings with
+                {
+                    Effects = new(settings.Effects)
+                    {
+                        [RaceFlag.CHEQUERED] = settings.Effects[RaceFlag.CHEQUERED] with
+                        {
+                            DurationSeconds = .12
+                        }
+                    }
+                };
                 await engine.PlayAsync(RaceFlag.CHEQUERED, rules);
                 await engine.Completion.WaitAsync(TimeSpan.FromSeconds(2));
                 check(engine.Active is null && store.Get<string[]>("pending_native_alert") is null
@@ -150,13 +169,22 @@ static class NativePulseTests
             bridge.RejectPulse = true;
             pulse = new HueNativePulse(client, store);
             var rejected = false;
-            try { await pulse.StartAsync(["1"], RaceFlag.SC, settings.Effects[RaceFlag.SC], settings, CancellationToken.None); }
+            try
+            {
+                await pulse.StartAsync(["1"], RaceFlag.SC, settings.Effects[RaceFlag.SC], settings, CancellationToken.None);
+            }
             catch (InvalidOperationException e) { rejected = !e.Message.Contains("private-test-key") && e.Message.Contains("refusée"); }
             check(rejected && store.Get<string[]>("pending_native_alert")!.SequenceEqual(["1"]),
                 "Hue v1 errors inside HTTP 200 are surfaced with credentials masked and recovery preserved");
             await pulse.StopAsync(CancellationToken.None);
             var invalid = false;
-            try { await client.LegacyRequestAsync(HttpMethod.Put, "groups/0/action", new { alert = "lselect" }, CancellationToken.None); }
+            try
+            {
+                await client.LegacyRequestAsync(HttpMethod.Put, "groups/0/action", new
+                {
+                    alert = "lselect"
+                }, CancellationToken.None);
+            }
             catch (ArgumentException) { invalid = true; }
             check(invalid, "Legacy API refuses the all-lamps group before sending any request");
         }
@@ -164,8 +192,10 @@ static class NativePulseTests
     }
     private static async Task Until(Func<bool> condition)
     {
-        for (var i = 0; i < 200 && !condition(); i++) await Task.Delay(10);
-        if (!condition()) throw new Exception("Native test timed out");
+        for (var i = 0; i < 200 && !condition(); i++)
+            await Task.Delay(10);
+        if (!condition())
+            throw new Exception("Native test timed out");
     }
     private sealed class FastClock : TimeProvider
     {
@@ -182,7 +212,8 @@ static class NativePulseTests
         public int Count(string alert) => Calls.Count(c => c.Body.Contains("\"alert\":\"" + alert + "\""));
         public HueClient Client() => new(new MemoryVault(), (_, pin, _) =>
         {
-            if (pin != "test-pin") throw new Exception("Native requests must retain certificate pinning");
+            if (pin != "test-pin")
+                throw new Exception("Native requests must retain certificate pinning");
             return new HttpClient(new Handler(Reply)) { BaseAddress = new Uri("https://192.168.1.20/") };
         });
         private async Task<HttpResponseMessage> Reply(HttpRequestMessage request, CancellationToken ct)
@@ -195,15 +226,31 @@ static class NativePulseTests
                 response = Scenes.Reply(path, request.Method, body, [Light(A, "/lights/1"), Light(B, "/lights/2"), Light(Guid.NewGuid().ToString(), "/lights/3")]);
             else if (path == "groups" && request.Method == HttpMethod.Get)
                 response = HasExactGroup ? "{\"0\":{\"lights\":[\"1\",\"2\"]},\"8\":{\"lights\":[\"1\",\"2\",\"3\"]},\"7\":{\"lights\":[\"1\",\"2\"]}}" : "{\"0\":{\"lights\":[\"1\",\"2\"]},\"8\":{\"lights\":[\"1\",\"2\",\"3\"]}}";
-            else if (path == "groups" && request.Method == HttpMethod.Post) { HasExactGroup = true; response = "[{\"success\":{\"id\":\"7\"}}]"; }
-            else if (path == "groups/7") response = GroupChanged ? "{\"lights\":[\"1\",\"2\",\"3\"]}" : "{\"lights\":[\"1\",\"2\"]}";
+            else if (path == "groups" && request.Method == HttpMethod.Post)
+            {
+                HasExactGroup = true;
+                response = "[{\"success\":{\"id\":\"7\"}}]";
+            }
+            else if (path == "groups/7")
+                response = GroupChanged ? "{\"lights\":[\"1\",\"2\",\"3\"]}" : "{\"lights\":[\"1\",\"2\"]}";
             else if (FailStopOnce && path == "lights/1/state" && body.Contains("none"))
-            { FailStopOnce = false; response = "[{\"error\":{\"type\":901,\"description\":\"temporarily unavailable\"}}]"; }
-            else if (RejectPulse && body.Contains("lselect")) response = "[{\"error\":{\"type\":7,\"description\":\"invalid alert /api/private-test-key/\"}}]";
-            else response = "[{\"success\":{\"alert\":true}}]";
+            {
+                FailStopOnce = false;
+                response = "[{\"error\":{\"type\":901,\"description\":\"temporarily unavailable\"}}]";
+            }
+            else if (RejectPulse && body.Contains("lselect"))
+                response = "[{\"error\":{\"type\":7,\"description\":\"invalid alert /api/private-test-key/\"}}]";
+            else
+                response = "[{\"success\":{\"alert\":true}}]";
             if (BlockRenewal && body.Contains("lselect") && Count("lselect") >= 2)
-            { RenewalEntered.TrySetResult(); await ReleaseRenewal.Task; } // Bridge applied it; reply ignores cancellation.
-            return new(HttpStatusCode.OK) { Content = new StringContent(response, System.Text.Encoding.UTF8, "application/json") };
+            {
+                RenewalEntered.TrySetResult();
+                await ReleaseRenewal.Task;
+            } // Bridge applied it; reply ignores cancellation.
+            return new(HttpStatusCode.OK)
+            {
+                Content = new StringContent(response, System.Text.Encoding.UTF8, "application/json")
+            };
         }
         private static object Light(string id, string legacy) => new { id, type = "light", owner = new { rid = SceneBridge.Device(id), rtype = "device" }, id_v1 = legacy, on = new { on = true }, dimming = new { brightness = 42 }, color = new { xy = new { x = .3, y = .4 } } };
     }

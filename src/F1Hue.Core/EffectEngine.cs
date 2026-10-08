@@ -2,7 +2,7 @@ namespace F1Hue.Core;
 
 // Every bridge operation goes through this gate. An expired timer cannot restore
 // the baseline after a more recent flag has acquired ownership of the lights.
-public sealed class EffectEngine(IEffectOutput output, TimeProvider? time = null) : IAsyncDisposable
+public sealed class EffectEngine(IEffectOutput output, TimeProvider? time = null, OperationTimeline? timeline = null) : IAsyncDisposable
 {
     private readonly TimeProvider _time = time ?? TimeProvider.System;
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -12,10 +12,13 @@ public sealed class EffectEngine(IEffectOutput output, TimeProvider? time = null
     private Task _completion = Task.CompletedTask;
     public event Action<RaceFlag?>? Changed;
     public event Action<Exception>? Failed;
-    public RaceFlag? Active { get; private set; }
+    public RaceFlag? Active
+    {
+        get; private set;
+    }
     public Task Completion => _completion;
 
-    public async Task PlayAsync(RaceFlag flag, AppSettings settings, bool preview = false, CancellationToken ct = default)
+    public async Task PlayAsync(RaceFlag flag, AppSettings settings, bool preview = false, CancellationToken ct = default, string? eventId = null)
     {
         ct.ThrowIfCancellationRequested();
         CancelTimer(false); // Interrupt a settled-state check from the expired flag before waiting for its gate.
@@ -24,12 +27,16 @@ public sealed class EffectEngine(IEffectOutput output, TimeProvider? time = null
         {
             CancelTimer(true);
             var generation = ++_generation;
+            if (Active is not null)
+                timeline?.Add("preempted", eventId, Active.ToString());
             await output.EndAnimationAsync(ct);
             var effect = settings.Effects[flag];
             if (!effect.Enabled && !preview)
             {
                 await output.RestoreAsync(ct);
-                SetActive(null); _completion = Task.CompletedTask; return;
+                SetActive(null);
+                _completion = Task.CompletedTask;
+                return;
             }
             await output.ApplyAsync(flag, effect, settings, ct);
             SetActive(flag);
@@ -37,12 +44,12 @@ public sealed class EffectEngine(IEffectOutput output, TimeProvider? time = null
             lock (_timerGate)
             {
                 _timer = new CancellationTokenSource();
-                _completion = duration is double seconds ? ExpireAsync(generation, seconds, _timer.Token) : Task.CompletedTask;
+                _completion = duration is double seconds ? ExpireAsync(generation, seconds, _timer.Token, eventId, flag) : Task.CompletedTask;
             }
         }
         finally { _gate.Release(); }
     }
-    private async Task ExpireAsync(long generation, double seconds, CancellationToken ct)
+    private async Task ExpireAsync(long generation, double seconds, CancellationToken ct, string? eventId, RaceFlag flag)
     {
         try
         {
@@ -50,9 +57,12 @@ public sealed class EffectEngine(IEffectOutput output, TimeProvider? time = null
             await _gate.WaitAsync(ct);
             try
             {
-                if (generation != _generation) return;
+                if (generation != _generation)
+                    return;
+                timeline?.Add("duration_elapsed", eventId, flag.ToString());
                 await output.EndAnimationAsync(ct);
                 await output.RestoreAsync(ct);
+                timeline?.Add("restored", eventId, flag.ToString());
                 SetActive(null);
             }
             finally { _gate.Release(); }
@@ -63,17 +73,29 @@ public sealed class EffectEngine(IEffectOutput output, TimeProvider? time = null
     public async Task StopAsync(bool restore, CancellationToken ct = default)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        deadline.CancelAfter(TimeSpan.FromSeconds(25)); ct = deadline.Token;
+        deadline.CancelAfter(TimeSpan.FromSeconds(25));
+        ct = deadline.Token;
         CancelTimer(false);
         await _gate.WaitAsync(ct);
         try
         {
-            ++_generation; CancelTimer(false);
+            ++_generation;
+            CancelTimer(false);
             var stopped = false;
-            try { await output.EndAnimationAsync(ct); stopped = true; }
+            try
+            {
+                await output.EndAnimationAsync(ct);
+                stopped = true;
+            }
             finally
             {
-                try { if (restore) await output.RestoreAsync(ct); else if (stopped) await output.ForgetAsync(ct); }
+                try
+                {
+                    if (restore)
+                        await output.RestoreAsync(ct);
+                    else if (stopped)
+                        await output.ForgetAsync(ct);
+                }
                 finally { SetActive(null); }
             }
         }
@@ -84,9 +106,22 @@ public sealed class EffectEngine(IEffectOutput output, TimeProvider? time = null
         lock (_timerGate)
         {
             _timer?.Cancel();
-            if (dispose) { _timer?.Dispose(); _timer = null; }
+            if (dispose)
+            {
+                _timer?.Dispose();
+                _timer = null;
+            }
         }
     }
-    private void SetActive(RaceFlag? flag) { Active = flag; Changed?.Invoke(flag); }
-    public async ValueTask DisposeAsync() { if (Active is not null) await StopAsync(false); CancelTimer(true); }
+    private void SetActive(RaceFlag? flag)
+    {
+        Active = flag;
+        Changed?.Invoke(flag);
+    }
+    public async ValueTask DisposeAsync()
+    {
+        if (Active is not null)
+            await StopAsync(false);
+        CancelTimer(true);
+    }
 }

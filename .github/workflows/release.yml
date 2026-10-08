@@ -33,11 +33,11 @@ jobs:
             runtime: linux-arm64
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
-          dotnet-version: 10.0.x
-      - uses: actions/setup-node@v4
+          global-json-file: global.json
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
       - run: npm ci --prefix apps/web
@@ -62,29 +62,41 @@ jobs:
           if [ '${{ runner.os }}' = 'Windows' ]; then service="$service.exe"; fi
           F1_HUE_TEST_EXECUTABLE="$service" node tests/api-smoke.mjs
           F1_HUE_TEST_EXECUTABLE="$service" node tests/desktop-auth.mjs
-      - uses: actions/upload-artifact@v4
+          F1_HUE_TEST_EXECUTABLE="$service" node tests/audit-api.mjs
+      - name: Test the macOS menu application lifecycle
+        if: runner.os == 'macOS'
+        run: bash tests/macos-launcher.sh 'artifacts/${{ matrix.runtime }}/F1 Hue Sync.app'
+      - name: Test Linux user service installation and update
+        if: runner.os == 'Linux'
+        run: bash tests/systemd-lifecycle.sh 'artifacts/${{ matrix.runtime }}/service'
+      - name: Test Windows installer and uninstaller
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: tests/windows-installer.ps1 -Runtime '${{ matrix.runtime }}'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: f1-hue-${{ matrix.runtime }}
           path: |
             artifacts/*.zip
             artifacts/*.tar.gz
             artifacts/*.exe
+            artifacts/*.runtime.json
           if-no-files-found: error
   docker:
     needs: verify
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v6
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           file: deploy/docker/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: false
           outputs: type=oci,dest=/tmp/f1-hue-image.tar
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: f1-hue-docker
           path: /tmp/f1-hue-image.tar
@@ -94,13 +106,35 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: f1-hue-*
           path: release
           merge-multiple: true
+      - name: Expand packages for the release inventory
+        run: node scripts/expand-release.mjs
+      - uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          path: inventory
+          format: spdx-json
+          syft-version: v1.54.1
+          output-file: release/f1-hue-release.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - uses: anchore/scan-action@1638637db639e0ade3258b51db49a9a137574c3e # v6
+        with:
+          sbom: release/f1-hue-release.spdx.json
+          grype-version: v0.120.1
+          severity-cutoff: high
+          output-format: json
+          output-file: release/vulnerability-report.json
+      - uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-path: release/*
       - name: Check tag, calculate checksums and publish
         env:
           GH_TOKEN: ${{ github.token }}
@@ -117,6 +151,6 @@ jobs:
           node scripts/check-release-tag.mjs "$RELEASE_TAG"
           node scripts/release-notes.mjs > "$RUNNER_TEMP/f1-hue-release-notes.md"
           cd release
-          sha256sum *.zip *.tar.gz *.exe *.tar > SHA256SUMS
+          sha256sum *.zip *.tar.gz *.exe *.tar *.json > SHA256SUMS
           if [[ "$RELEASE_TAG" == *-* ]]; then args+=(--prerelease); fi
           gh release create "$RELEASE_TAG" --title "F1 Hue Sync $RELEASE_TAG" --notes-file "$RUNNER_TEMP/f1-hue-release-notes.md" "${args[@]}" ./*

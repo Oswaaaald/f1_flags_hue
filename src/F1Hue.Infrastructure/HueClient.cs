@@ -11,14 +11,54 @@ public sealed record HueLight(string Id, string Name, bool Color, string? Legacy
 public sealed record HueGroup(string Id, string Name, string Type, string[] LightIds, string? LegacyId);
 public sealed record HueArea(string Id, string Name, string[] LightIds, int[] Channels);
 public sealed record HueInventory(HueLight[] Lights, HueGroup[] Groups, HueArea[] Entertainment);
-public sealed class HueClient(IBridgeVault vault, Func<string, string?, Action<string>?, HttpClient>? clientFactory = null) : IDisposable
+public sealed record HueStatus(bool Linked, string? Ip, string? Name, bool Entertainment);
+public sealed class HueResourceMissingException() : InvalidOperationException("Une ressource Hue sauvegardée a été supprimée (HTTP 404).");
+
+public sealed class HueClient(IBridgeVault vault, Func<string, string?, Action<string>?, HttpClient>? clientFactory = null, TimeProvider? time = null) : IDisposable
 {
+    private readonly SemaphoreSlim _groupBudget = new(1, 1);
+    private long? _lastGroupWrite;
+    internal async Task<IDisposable?> GroupBudgetAsync(bool urgent, CancellationToken ct)
+    {
+        // Stop bypasses the queue. Ordinary colors and pulse renewals share a
+        // budget; they never emulate an animation with repeated REST frames.
+        if (urgent)
+            return null;
+        var clock = time ?? TimeProvider.System;
+        await _groupBudget.WaitAsync(ct);
+        try
+        {
+            if (_lastGroupWrite is long last)
+            {
+                var remaining = TimeSpan.FromSeconds(1) - clock.GetElapsedTime(last);
+                if (remaining > TimeSpan.Zero)
+                    await Task.Delay(remaining, clock, ct);
+            }
+            return new GroupBudgetLease(this, clock);
+        }
+        catch { _groupBudget.Release(); throw; }
+    }
+    private sealed class GroupBudgetLease(HueClient owner, TimeProvider clock) : IDisposable
+    {
+        public void Dispose()
+        {
+            owner._lastGroupWrite = clock.GetTimestamp();
+            owner._groupBudget.Release();
+        }
+    }
     private HttpClient NewClient(string ip, string? pin, Action<string>? capture = null) => (clientFactory ?? Client)(ip, pin, capture);
     private readonly SemaphoreSlim _trust = new(1, 1);
     // Reuse the HTTPS connection, like requests.Session in the Python engine.
     // A changed address or certificate gets a separate pinned transport.
     private readonly ConcurrentDictionary<(string Ip, string Pin), Lazy<HttpClient>> _clients = new();
-    public object Status { get { var c = vault.Read(); return new { linked = c is not null, ip = c?.Ip, name = c?.Name, entertainment = c?.ClientKey is not null }; } }
+    public HueStatus Status
+    {
+        get
+        {
+            var c = vault.Read();
+            return new(c is not null, c?.Ip, c?.Name, c?.ClientKey is not null);
+        }
+    }
     public static string LocalAddress(string ip)
     {
         if (!IPAddress.TryParse(ip, out var address) || address.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork)
@@ -34,13 +74,21 @@ public sealed class HueClient(IBridgeVault vault, Func<string, string?, Action<s
         var handler = new HttpClientHandler { UseProxy = false, AllowAutoRedirect = false };
         handler.ServerCertificateCustomValidationCallback = (_, cert, _, _) =>
         {
-            if (cert is null) return false;
+            if (cert is null)
+                return false;
             var actual = Convert.ToHexString(SHA256.HashData(cert.RawData));
-            if (pin is not null) return CryptographicOperations.FixedTimeEquals(System.Text.Encoding.ASCII.GetBytes(actual), System.Text.Encoding.ASCII.GetBytes(pin));
-            if (firstCertificate is null) return false;
-            firstCertificate(actual); return true; // TOFU only for /api/config before sending any credentials.
+            if (pin is not null)
+                return CryptographicOperations.FixedTimeEquals(System.Text.Encoding.ASCII.GetBytes(actual), System.Text.Encoding.ASCII.GetBytes(pin));
+            if (firstCertificate is null)
+                return false;
+            firstCertificate(actual);
+            return true; // TOFU only for /api/config before sending any credentials.
         };
-        return new(handler) { BaseAddress = new Uri($"https://{ip}/"), Timeout = TimeSpan.FromSeconds(8) };
+        return new(handler)
+        {
+            BaseAddress = new Uri($"https://{ip}/"),
+            Timeout = TimeSpan.FromSeconds(8)
+        };
     }
     private async Task<(string Pin, string Id, string Name)> Identify(string ip, CancellationToken ct)
     {
@@ -51,21 +99,29 @@ public sealed class HueClient(IBridgeVault vault, Func<string, string?, Action<s
             using var response = await client.GetAsync("api/config", ct);
             response.EnsureSuccessStatusCode();
             var data = await response.Content.ReadFromJsonAsync<JsonElement>(ct);
-            if (!data.TryGetProperty("bridgeid", out var id) || fingerprint is null) throw new InvalidOperationException("Cette adresse ne répond pas comme un pont Hue.");
+            if (!data.TryGetProperty("bridgeid", out var id) || fingerprint is null)
+                throw new InvalidOperationException("Cette adresse ne répond pas comme un pont Hue.");
             return (fingerprint, id.GetString()!, data.GetProperty("name").GetString() ?? "Hue Bridge");
         }
         catch (HttpRequestException) { throw new InvalidOperationException("Impossible de joindre le pont Hue. Vérifie son adresse et l’autorisation Réseau local de l’application F1 Hue Sync."); }
         catch (TaskCanceledException) when (!ct.IsCancellationRequested) { throw new InvalidOperationException("Le pont Hue ne répond pas. Vérifie son alimentation et son réseau."); }
     }
-    public async Task PairAsync(string ip, CancellationToken ct)
+    public async Task PairAsync(string ip, CancellationToken ct, string? expectedBridgeId = null)
     {
         ip = LocalAddress(ip);
         var identity = await Identify(ip, ct);
+        if (expectedBridgeId is not null && !string.Equals(expectedBridgeId, identity.Id, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("La récupération appartient à un autre pont. La liaison n’a pas été remplacée.");
         using var client = NewClient(ip, identity.Pin);
-        using var response = await client.PostAsJsonAsync("api", new { devicetype = "f1_hue_sync#local", generateclientkey = true }, ct);
+        using var response = await client.PostAsJsonAsync("api", new
+        {
+            devicetype = "f1_hue_sync#local",
+            generateclientkey = true
+        }, ct);
         response.EnsureSuccessStatusCode();
         var result = await response.Content.ReadFromJsonAsync<JsonElement>(ct);
-        if (result.ValueKind != JsonValueKind.Array || result.GetArrayLength() == 0) throw new InvalidOperationException("Réponse de liaison Hue invalide.");
+        if (result.ValueKind != JsonValueKind.Array || result.GetArrayLength() == 0)
+            throw new InvalidOperationException("Réponse de liaison Hue invalide.");
         var first = result[0];
         if (first.TryGetProperty("error", out var error))
             throw new InvalidOperationException(error.GetProperty("type").GetInt32() == 101 ? "Appuie sur le bouton physique du pont, puis clique sur Lier dans les 30 secondes." : "Le pont a refusé la liaison.");
@@ -81,7 +137,13 @@ public sealed class HueClient(IBridgeVault vault, Func<string, string?, Action<s
             if (c.CertificatePin is null)
             {
                 var id = await Identify(c.Ip, ct);
-                c = c with { CertificatePin = id.Pin, BridgeId = id.Id, Name = id.Name }; vault.Save(c);
+                c = c with
+                {
+                    CertificatePin = id.Pin,
+                    BridgeId = id.Id,
+                    Name = id.Name
+                };
+                vault.Save(c);
             }
             return c;
         }
@@ -101,14 +163,19 @@ public sealed class HueClient(IBridgeVault vault, Func<string, string?, Action<s
         var c = await CredentialsAsync(ct);
         var client = _clients.GetOrAdd((c.Ip, c.CertificatePin!), key => new Lazy<HttpClient>(() => NewClient(key.Ip, key.Pin))).Value;
         using var request = new HttpRequestMessage(method, legacy ? "api/" + Uri.EscapeDataString(c.ApplicationKey) + "/" + path : "clip/v2/resource" + path);
-        if (!legacy) request.Headers.Add("hue-application-key", c.ApplicationKey);
-        if (body is not null) request.Content = JsonContent.Create(body, options: JsonDefaults.Options);
+        if (!legacy)
+            request.Headers.Add("hue-application-key", c.ApplicationKey);
+        if (body is not null)
+            request.Content = JsonContent.Create(body, options: JsonDefaults.Options);
         try
         {
             using var response = await client.SendAsync(request, ct);
-            if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden) throw new InvalidOperationException("Le pont refuse la clé. Lie à nouveau le pont.");
+            if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+                throw new InvalidOperationException("Le pont refuse la clé. Lie à nouveau le pont.");
             if (!response.IsSuccessStatusCode)
             {
+                if (response.StatusCode == HttpStatusCode.NotFound)
+                    throw new HueResourceMissingException();
                 var detail = response.StatusCode switch
                 {
                     HttpStatusCode.BadRequest => "Le pont a refusé le contenu de la commande.",
@@ -139,13 +206,18 @@ public sealed class HueClient(IBridgeVault vault, Func<string, string?, Action<s
             if (data.ValueKind != JsonValueKind.Object || !data.TryGetProperty("errors", out var errors) || errors.ValueKind != JsonValueKind.Array
                 || !data.TryGetProperty("data", out var resources) || resources.ValueKind != JsonValueKind.Array)
                 throw new InvalidOperationException("Réponse Hue invalide.");
-            if (errors.GetArrayLength() > 0) throw new InvalidOperationException("Commande Hue refusée : " + (errors[0].GetProperty("description").GetString() ?? "erreur du pont").Replace(c.ApplicationKey, "[clé masquée]", StringComparison.Ordinal));
+            if (errors.GetArrayLength() > 0)
+                throw new InvalidOperationException("Commande Hue refusée : " + (errors[0].GetProperty("description").GetString() ?? "erreur du pont").Replace(c.ApplicationKey, "[clé masquée]", StringComparison.Ordinal));
             return resources.Clone();
         }
         catch (HttpRequestException e) when (e.HttpRequestError == HttpRequestError.SecureConnectionError)
-        { throw new InvalidOperationException("La connexion HTTPS au pont Hue a échoué. Vérifie son certificat et la liaison du pont."); }
+        {
+            throw new InvalidOperationException("La connexion HTTPS au pont Hue a échoué. Vérifie son certificat et la liaison du pont.");
+        }
         catch (HttpRequestException)
-        { throw new InvalidOperationException("Pont Hue inaccessible. Vérifie son adresse, le réseau local et l’autorisation Réseau local de F1 Hue Sync."); }
+        {
+            throw new InvalidOperationException("Pont Hue inaccessible. Vérifie son adresse, le réseau local et l’autorisation Réseau local de F1 Hue Sync.");
+        }
         catch (TaskCanceledException) when (!ct.IsCancellationRequested) { throw new InvalidOperationException("Le pont Hue ne répond pas. Vérifie la connexion au réseau local."); }
         catch (JsonException) { throw new InvalidOperationException("Réponse Hue invalide."); }
     }
@@ -169,9 +241,11 @@ public sealed class HueClient(IBridgeVault vault, Func<string, string?, Action<s
     public Task PutLightAsync(string id, object state, CancellationToken ct) => Guid.TryParse(id, out _) ? RequestAsync(HttpMethod.Put, "/light/" + id, state, ct) : throw new ArgumentException("Lampe invalide.");
     public async Task RecallSceneAsync(string id, string[] selected, bool dynamic, CancellationToken ct)
     {
-        if (!Guid.TryParse(id, out _) || selected.Length == 0) throw new ArgumentException("Scène ou sélection Hue invalide.");
+        if (!Guid.TryParse(id, out _) || selected.Length == 0)
+            throw new ArgumentException("Scène ou sélection Hue invalide.");
         var scenes = await RequestAsync(HttpMethod.Get, "/scene/" + id, null, ct);
-        if (scenes.GetArrayLength() != 1) throw new ArgumentException("Scène Hue introuvable.");
+        if (scenes.GetArrayLength() != 1)
+            throw new ArgumentException("Scène Hue introuvable.");
         var scene = scenes[0];
         var targets = scene.GetProperty("actions").EnumerateArray().Select(a => a.GetProperty("target")).ToArray();
         var inventory = await InventoryAsync(ct);
@@ -180,7 +254,14 @@ public sealed class HueClient(IBridgeVault vault, Func<string, string?, Action<s
             || targets.Any(t => t.GetProperty("rtype").GetString() != "light")
             || !targets.Select(t => t.GetProperty("rid").GetString()!).ToHashSet().SetEquals(selected))
             throw new ArgumentException("La scène Hue doit cibler exactement les lampes sélectionnées.");
-        await RequestAsync(HttpMethod.Put, "/scene/" + id, new { recall = new { action = dynamic ? "dynamic_palette" : "static", duration = 400 } }, ct);
+        await RequestAsync(HttpMethod.Put, "/scene/" + id, new
+        {
+            recall = new
+            {
+                action = dynamic ? "dynamic_palette" : "static",
+                duration = 400
+            }
+        }, ct);
     }
     public async Task<HueInventory> InventoryAsync(CancellationToken ct)
     {
@@ -204,15 +285,20 @@ public sealed class HueClient(IBridgeVault vault, Func<string, string?, Action<s
     }
     public static string[] ResolveSelection(HueInventory inventory, string[] lightIds, string[] groupIds)
     {
-        if (groupIds.Any(id => !inventory.Groups.Any(g => g.Id == id)) || lightIds.Any(id => !inventory.Lights.Any(l => l.Id == id))) throw new ArgumentException("La sélection contient une lampe ou une zone introuvable.");
+        if (groupIds.Any(id => !inventory.Groups.Any(g => g.Id == id)) || lightIds.Any(id => !inventory.Lights.Any(l => l.Id == id)))
+            throw new ArgumentException("La sélection contient une lampe ou une zone introuvable.");
         var result = lightIds.Concat(inventory.Groups.Where(g => groupIds.Contains(g.Id)).SelectMany(g => g.LightIds)).Distinct().ToArray();
-        if (result.Length == 0) throw new ArgumentException("Choisis au moins une lampe.");
-        if (result.Any(id => !inventory.Lights.Any(l => l.Id == id && l.Color))) throw new ArgumentException("La sélection contient une lampe qui ne prend pas en charge la couleur.");
+        if (result.Length == 0)
+            throw new ArgumentException("Choisis au moins une lampe.");
+        if (result.Any(id => !inventory.Lights.Any(l => l.Id == id && l.Color)))
+            throw new ArgumentException("La sélection contient une lampe qui ne prend pas en charge la couleur.");
         return result;
     }
     public void Dispose()
     {
-        foreach (var client in _clients.Values) if (client.IsValueCreated) client.Value.Dispose();
+        foreach (var client in _clients.Values)
+            if (client.IsValueCreated)
+                client.Value.Dispose();
         _trust.Dispose();
     }
 }

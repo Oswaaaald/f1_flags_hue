@@ -82,7 +82,7 @@
       "f1hue.infrastructure": {
         "type": "Project",
         "dependencies": {
-          "F1Hue.Core": "[2.0.0-preview.6, )",
+          "F1Hue.Core": "[2.0.0-preview.14, )",
           "Microsoft.AspNetCore.SignalR.Client": "[10.0.12, )",
           "Microsoft.Data.Sqlite": "[10.0.12, )",
           "SQLitePCLRaw.bundle_e_sqlite3": "[2.1.13, )",

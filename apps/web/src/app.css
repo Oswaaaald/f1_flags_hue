@@ -55,11 +55,11 @@
     --surface: #fff;
     --muted-surface: #f2f3f0;
     --text: #232923;
-    --muted: #757c74;
+    --muted: #626b61;
     --line: #e4e7e1;
     --accent: #254d38;
     --accent-soft: #eaf2e9;
-    --focus: #7bab87;
+    --focus: #52745b;
     --red: #a43737;
     --red-soft: #fbefec;
     --shadow: 0 12px 35px #1426170c;
@@ -996,5 +996,70 @@
   .mobile-logout {
     display: inline-flex;
     font-size: 0.75rem;
+  }
+}
+
+@layer components {
+  .recovery {
+    margin-bottom: 24px;
+    border-color: var(--red);
+  }
+  .recovery code {
+    overflow-wrap: anywhere;
+  }
+  #service-warning,
+  #runner-error {
+    margin-bottom: 16px;
+  }
+  .notice .text-button {
+    text-decoration: underline;
+  }
+  summary {
+    cursor: pointer;
+  }
+}
+@layer responsive {
+  @media (max-width: 420px) {
+    .topbar {
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .topbar > #breadcrumb {
+      flex-basis: 100%;
+      font-size: 12px;
+    }
+    .topbar-actions {
+      width: 100%;
+      justify-content: space-between;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .topbar-actions .badge {
+      font-size: 11px;
+      white-space: normal;
+    }
+    .topbar-actions .button {
+      flex-shrink: 0;
+    }
+    .nav-link {
+      min-width: 0;
+      font-size: 11px;
+      padding-inline: 4px;
+    }
+    .tabs {
+      flex-wrap: wrap;
+    }
+    .tab {
+      flex: 1 1 auto;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation: none !important;
+      transition: none !important;
+      scroll-behavior: auto !important;
+    }
   }
 }

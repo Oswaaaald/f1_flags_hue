@@ -10,7 +10,9 @@ final class LocalRequestDelegate: NSObject, URLSessionTaskDelegate {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var item: NSStatusItem!
     private var process: Process?
-    private var logHandle: FileHandle?
+    private var logSink: RotatingLog?
+    private var logPipe: Pipe?
+    private var stopInProgress = false
     private var loginItem: NSMenuItem!
     private var lastError: String?
     private var stopping = false
@@ -51,18 +53,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         stopping = false
         lastError = nil
         do {
-            try? logHandle?.close()
+            logPipe?.fileHandleForReading.readabilityHandler = nil
+            logSink?.close()
             try FileManager.default.createDirectory(at: dataPath, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-            let log = dataPath.appendingPathComponent("service.log")
-            if let size = try? log.resourceValues(forKeys: [.fileSizeKey]).fileSize, size > 2_000_000 { try? FileManager.default.removeItem(at: log) }
-            if !FileManager.default.fileExists(atPath: log.path) { FileManager.default.createFile(atPath: log.path, contents: nil, attributes: [.posixPermissions: 0o600]) }
-            logHandle = try FileHandle(forWritingTo: log); try logHandle?.seekToEnd()
+            let sink = try RotatingLog(directory: dataPath)
+            let pipe = Pipe()
+            pipe.fileHandleForReading.readabilityHandler = { handle in
+                let data = handle.availableData
+                if data.isEmpty { handle.readabilityHandler = nil } else { sink.append(data) }
+            }
+            logSink = sink; logPipe = pipe
             let child = Process()
             child.executableURL = Bundle.main.resourceURL!.appendingPathComponent("service/f1-hue")
             child.arguments = ["--desktop", "--listen", "127.0.0.1", "--data", dataPath.path, "--port", String(port)]
             let oldConfig = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("f1_flags_hue/config.yml").path
             if let path = importPath ?? (FileManager.default.fileExists(atPath: oldConfig) ? oldConfig : nil) { child.arguments! += ["--import", path] }
-            child.standardOutput = logHandle; child.standardError = logHandle
+            child.standardOutput = pipe; child.standardError = pipe
             child.terminationHandler = { [weak self] p in
                 DispatchQueue.main.async {
                     guard let self = self, self.process === p, !self.stopping else { return }
@@ -86,7 +92,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     private func waitAndOpen(attempt: Int) {
         var request = URLRequest(url: serverURL.appendingPathComponent("health")); request.timeoutInterval = 1
-        URLSession.shared.dataTask(with: request) { [weak self] data, _, _ in
+        localSession.dataTask(with: request) { [weak self] data, _, _ in
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 if let data = data, let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any], json["status"] as? String == "ok" { self.openInterface(); return }
@@ -144,29 +150,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func importConfig() {
         let picker = NSOpenPanel(); picker.canChooseDirectories = false; picker.allowsMultipleSelection = false; picker.title = "Importer les réglages de la version Python"
         NSApp.activate(ignoringOtherApps: true)
-        if picker.runModal() == .OK, let file = picker.url, stopService() { startService(importPath: file.path); waitAndOpen(attempt: 0) }
-    }
-    @discardableResult private func stopService() -> Bool {
-        stopping = true
-        restartWork?.cancel(); restartWork = nil
-        if let child = process, child.isRunning {
-            child.terminate()
-            let deadline = Date().addingTimeInterval(45)
-            while child.isRunning && Date() < deadline { Thread.sleep(forTimeInterval: 0.05) }
-            if child.isRunning {
-                showError("Le service termine encore l’arrêt des lampes. Réessaie de quitter dans quelques instants. Aucun autre service ne sera lancé entre-temps.")
-                return false
+        guard !stopInProgress else { return }
+        if picker.runModal() == .OK, let file = picker.url {
+            stopService { [weak self] success in
+                guard let self = self, success else { return }
+                self.startService(importPath: file.path); self.waitAndOpen(attempt: 0)
             }
-            child.waitUntilExit()
         }
-        process = nil; try? logHandle?.close(); logHandle = nil
-        return true
     }
-    @objc private func quit() { if stopService() { NSApp.terminate(nil) } }
-    func applicationWillTerminate(_ notification: Notification) { stopService() }
+    private func stopService(completion: @escaping (Bool) -> Void) {
+        guard !stopInProgress else { completion(false); return }
+        stopping = true; stopInProgress = true
+        restartWork?.cancel(); restartWork = nil
+        item?.button?.title = " Arrêt…"
+        item?.menu?.items.forEach { $0.isEnabled = false }
+        let child = process
+        if child?.isRunning == true { child?.terminate() }
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let deadline = Date().addingTimeInterval(45)
+            while child?.isRunning == true && Date() < deadline { Thread.sleep(forTimeInterval: 0.05) }
+            let stopped = child?.isRunning != true
+            if stopped { child?.waitUntilExit() }
+            DispatchQueue.main.async {
+                guard let self = self else { completion(stopped); return }
+                self.stopInProgress = false
+                self.item?.button?.title = ""
+                self.item?.menu?.items.forEach { $0.isEnabled = true }
+                if stopped {
+                    self.process = nil
+                    self.logPipe?.fileHandleForReading.readabilityHandler = nil
+                    self.logSink?.close(); self.logSink = nil; self.logPipe = nil
+                } else {
+                    self.showError("Le service termine encore l’arrêt des lampes. Réessaie de quitter dans quelques instants. La sauvegarde de récupération est conservée.")
+                }
+                completion(stopped)
+            }
+        }
+    }
+    @objc private func quit() { NSApp.terminate(nil) }
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard process?.isRunning == true else { return .terminateNow }
+        guard !stopInProgress else { return .terminateCancel }
+        stopService { success in sender.reply(toApplicationShouldTerminate: success) }
+        return .terminateLater
+    }
     private func showError(_ message: String) { let alert = NSAlert(); alert.messageText = "F1 Hue Sync"; alert.informativeText = message; alert.runModal() }
 }
-let application = NSApplication.shared
-let delegate = AppDelegate()
-application.delegate = delegate
-application.run()
+@main
+struct Launcher {
+    static func main() {
+        let application = NSApplication.shared
+        let delegate = AppDelegate()
+        application.delegate = delegate
+        withExtendedLifetime(delegate) { application.run() }
+    }
+}

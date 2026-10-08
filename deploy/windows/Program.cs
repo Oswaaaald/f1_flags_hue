@@ -20,6 +20,8 @@ sealed class TrayApplication : ApplicationContext
     private readonly Queue<DateTimeOffset> _restarts = new();
     private DateTimeOffset? _restartAt;
     private bool _stopping;
+    private bool _busy;
+    private bool _quitting;
     public TrayApplication(bool background)
     {
         var menu = new ContextMenuStrip();
@@ -45,7 +47,6 @@ sealed class TrayApplication : ApplicationContext
         _stopping = false;
         Directory.CreateDirectory(_data);
         var logFile = Path.Combine(_data, "service.log");
-        if (File.Exists(logFile) && new FileInfo(logFile).Length > 2_000_000) File.Delete(logFile);
         _log = new StreamWriter(new FileStream(logFile, FileMode.Append, FileAccess.Write, FileShare.ReadWrite)) { AutoFlush = true };
         var info = new ProcessStartInfo(Path.Combine(AppContext.BaseDirectory, "service", "f1-hue.exe")) { CreateNoWindow = true, UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true };
         foreach (var argument in new[] { "--desktop", "--listen", "127.0.0.1", "--data", _data, "--port", "8081" }) info.ArgumentList.Add(argument);
@@ -54,7 +55,28 @@ sealed class TrayApplication : ApplicationContext
         _service.OutputDataReceived += (_, e) => Log(e.Data); _service.ErrorDataReceived += (_, e) => Log(e.Data);
         _service.Start(); _service.BeginOutputReadLine(); _service.BeginErrorReadLine();
     }
-    private void Log(string? line) { if (line is not null) lock (_logGate) _log?.WriteLine(line); }
+    private void Log(string? line)
+    {
+        if (line is null) return;
+        lock (_logGate)
+        {
+            try
+            {
+                if (_log is null) return;
+                if (_log.BaseStream.Length + System.Text.Encoding.UTF8.GetByteCount(line) > 2_000_000)
+                {
+                    _log.Dispose(); _log = null;
+                    var file = Path.Combine(_data, "service.log");
+                    File.Delete(file + ".3");
+                    for (var i = 2; i >= 1; i--) if (File.Exists(file + "." + i)) File.Move(file + "." + i, file + "." + (i + 1), true);
+                    File.Move(file, file + ".1", true);
+                    _log = new StreamWriter(new FileStream(file, FileMode.Append, FileAccess.Write, FileShare.ReadWrite)) { AutoFlush = true };
+                }
+                _log.WriteLine(line);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { /* Keep ownership of the lamps if the log disk is unavailable. */ }
+        }
+    }
     private void Supervise()
     {
         if (_stopping || _service is not { HasExited: true } child || child.ExitCode is 0 or 2) return;
@@ -73,7 +95,7 @@ sealed class TrayApplication : ApplicationContext
     }
     private async Task WaitAndOpen()
     {
-        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(1) };
+        using var http = new HttpClient(new HttpClientHandler { UseProxy = false, AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(1) };
         for (var i = 0; i < 20; i++)
         {
             try { var response = await http.GetStringAsync(_url + "/health"); if (JsonDocument.Parse(response).RootElement.GetProperty("status").GetString() == "ok") { await DesktopBrowser.Open(); return; } }
@@ -99,28 +121,59 @@ sealed class TrayApplication : ApplicationContext
         if (File.Exists(path) && Uri.TryCreate(File.ReadAllText(path).Trim(), UriKind.Absolute, out var uri) && uri.Scheme == "https") Process.Start(new ProcessStartInfo(uri.ToString()) { UseShellExecute = true });
         else MessageBox.Show("Consulte la section Releases du dépôt du projet.", "F1 Hue Sync");
     }
-    private bool Stop()
+    private async Task<bool> StopAsync()
     {
-        _stopping = true; _restartAt = null;
-        if (_service is { HasExited: false })
+        if (_busy) return false;
+        _busy = true; _stopping = true; _restartAt = null;
+        _tray.Text = "F1 Hue Sync · Arrêt des lampes…";
+        foreach (ToolStripItem item in _tray.ContextMenuStrip!.Items) item.Enabled = false;
+        try
         {
-            // Private marker: the host performs normal cancellation and lamp restoration.
-            File.WriteAllText(Path.Combine(_data, "stop.request"), "stop");
-            if (!_service.WaitForExit(45000))
+            if (_service is { HasExited: false })
             {
-                MessageBox.Show("Le service termine encore l’arrêt des lampes. Réessaie de quitter dans quelques instants. Aucun autre service ne sera lancé entre-temps.", "F1 Hue Sync");
-                return false;
+                // The private marker requests the host's normal restoration.
+                await File.WriteAllTextAsync(Path.Combine(_data, "stop.request"), "stop");
+                using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+                try { await _service.WaitForExitAsync(deadline.Token); }
+                catch (OperationCanceledException)
+                {
+                    MessageBox.Show("Le service termine encore l’arrêt des lampes. Réessaie de quitter dans quelques instants. La sauvegarde de récupération est conservée.", "F1 Hue Sync");
+                    return false;
+                }
             }
+            _service?.Dispose(); _service = null;
+            lock (_logGate) { _log?.Dispose(); _log = null; }
+            return true;
         }
-        _service?.Dispose(); _service = null; lock (_logGate) { _log?.Dispose(); _log = null; }
-        return true;
+        finally
+        {
+            _busy = false; _tray.Text = "F1 Hue Sync";
+            foreach (ToolStripItem item in _tray.ContextMenuStrip!.Items) item.Enabled = true;
+        }
     }
-    private void Import()
+    private async void Import()
     {
+        if (_busy) return;
         using var picker = new OpenFileDialog { Filter = "Configuration YAML|*.yml;*.yaml", Title = "Importer les réglages de la version Python" };
-        if (picker.ShowDialog() == DialogResult.OK && Stop()) { Start(picker.FileName); _ = WaitAndOpen(); }
+        if (picker.ShowDialog() != DialogResult.OK) return;
+        try { if (await StopAsync()) { Start(picker.FileName); await WaitAndOpen(); } }
+        catch (Exception e) { MessageBox.Show(e.Message, "F1 Hue Sync"); }
     }
-    protected override void ExitThreadCore() { if (!Stop()) return; _supervisor.Dispose(); _tray.Visible = false; _tray.Dispose(); base.ExitThreadCore(); }
+    protected override void ExitThreadCore()
+    {
+        if (_quitting || _busy) return;
+        _quitting = true; _ = QuitAsync();
+    }
+    private async Task QuitAsync()
+    {
+        try
+        {
+            if (!await StopAsync()) return;
+            _supervisor.Dispose(); _tray.Visible = false; _tray.Dispose(); base.ExitThreadCore();
+        }
+        catch (Exception e) { MessageBox.Show(e.Message, "F1 Hue Sync"); }
+        finally { _quitting = false; }
+    }
 }
 
 static class DesktopBrowser
