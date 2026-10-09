@@ -1,6 +1,48 @@
 import AxeBuilder from "@axe-core/playwright";
 import { test, expect } from "./fixtures";
 
+test("Live activity is explicit even when F1 is connected and no effect is playing", async ({ page, service }, info) => {
+  await service.open(page);
+  await service.post(page, "/hue/select", { lightIds: ["11111111-1111-1111-1111-111111111111"], groupIds: [] });
+  await service.post(page, "/simulation/event", { topic: "SessionStatus", payload: { Status: "Started" } });
+  await expect(page.locator("#connection")).toHaveText("Flux F1 connecté");
+  await expect(page.locator("#mode-status")).toHaveText("Direct inactif");
+  await expect(page.locator("[data-mode-detail]")).toContainText("Tes lampes ne suivent pas la F1");
+  await expect(page.locator("#stop")).toBeDisabled();
+  await page.screenshot({ path: info.outputPath("direct-inactive-desktop.png"), fullPage: true });
+  await page.getByRole("button", { name: "Activer le direct", exact: true }).click();
+  await expect(page.locator("#mode-status")).toHaveText("Direct actif");
+  await expect(page.locator("[data-live=effect]")).toHaveText("Ambiance initiale");
+  await expect(page.locator("#stop")).toBeEnabled();
+  await page.screenshot({ path: info.outputPath("direct-active-desktop.png"), fullPage: true });
+  await page.getByRole("tab", { name: "Calibration TV" }).click();
+  await expect(page.locator("[data-mode-title]")).toHaveText("Direct actif");
+  await page.locator("#stop").click();
+  await expect(page.locator("#mode-status")).toHaveText("Direct inactif");
+  await expect(page.locator("#stop")).toBeDisabled();
+  await page.getByRole("link", { name: "Tests", exact: true }).click();
+  await page.getByRole("button", { name: "Safety car", exact: true }).click();
+  await expect(page.locator("#mode-status")).toHaveText("Test en cours");
+  await page.locator("#stop").click();
+  await expect(page.locator("#mode-status")).toHaveText("Direct inactif");
+  await expect(page.locator("#stop")).toBeDisabled();
+});
+
+test("Stop remains available while a mode is starting", async ({ page, service }) => {
+  await service.open(page);
+  await service.post(page, "/hue/select", { lightIds: ["11111111-1111-1111-1111-111111111111"], groupIds: [] });
+  let release!: () => void;
+  const blocked = new Promise<void>(resolve => release = resolve);
+  await page.route("**/api/live/start", async route => { await blocked; await route.abort(); });
+  try {
+    await page.getByRole("button", { name: "Activer le direct", exact: true }).click();
+    await expect(page.locator("#mode-status")).toHaveText("Préparation en cours…");
+    await expect(page.locator("#stop")).toBeEnabled();
+  } finally { release(); }
+  await expect(page.locator("#mode-status")).toHaveText("Direct inactif");
+  await expect(page.locator("#stop")).toBeDisabled();
+});
+
 test("Hue selection, drafts, native preview and Stop stay coherent", async ({ page, service }) => {
   const errors: string[] = []; page.on("pageerror", e => errors.push(e.message));
   await service.open(page);
@@ -71,6 +113,7 @@ test("Every view stays accessible at 320px and with enlarged text", async ({ pag
   for (const name of ["Direct", "Hue", "Tests", "Drapeaux", "Préférences"]) {
     await page.getByRole("link", { name, exact: true }).click();
     await expect(page.locator("#stop")).toBeInViewport();
+    if (name === "Direct") await page.screenshot({ path: info.outputPath("direct-inactive-320px.png"), fullPage: true });
     if (name === "Hue") await expect(page.locator('[data-form="selection"]')).toBeVisible();
     const result = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze();
     expect(result.violations, JSON.stringify(result.violations, null, 2)).toEqual([]);
@@ -123,4 +166,9 @@ test("Recovery guidance is shown only after active control ends", async ({ page,
   await page.reload();
   await expect(page.getByRole("heading", { name: "Récupérer ton ambiance" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Restaurer les lampes disponibles" })).toBeEnabled();
+  // This fixture closes SSE after its single state. The global status must
+  // report the lost connection while keeping the known recovery actionable.
+  await expect(page.locator("#mode-status")).toHaveText("État inconnu");
+  await expect(page.locator("#stop")).toBeEnabled();
+  await expect(page.locator("#stop")).toHaveText("Réessayer l’arrêt");
 });

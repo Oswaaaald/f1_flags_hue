@@ -9,6 +9,7 @@ import {
   updateCalibration as renderCalibration,
 } from "./calibration-controls";
 import { syncSelection } from "./selection";
+import { canStop, modeStatus } from "./mode-status";
 import { recovery } from "./views/recovery";
 import { live, logs } from "./views/live";
 import { hue } from "./views/hue";
@@ -21,6 +22,7 @@ let formRevision = -1;
 let serviceConnected = true;
 let recoveryKey = "";
 let stopRequested = false;
+let modeStarting = false;
 let offsetDirty = false;
 let offsetSaving = false;
 const pending = new WeakSet<HTMLElement>();
@@ -176,6 +178,7 @@ function renderInventory() {
 function updateControls() {
   const locked =
     stopRequested ||
+    modeStarting ||
     state.initializing ||
     state.runner.running ||
     state.runner.stopping ||
@@ -183,7 +186,12 @@ function updateControls() {
     !!state.recovery?.pending;
   const disable = (el: HTMLElement, value: boolean) =>
     el.toggleAttribute("disabled", value || pending.has(el));
-  disable($("#stop"), stopRequested || state.runner.stopping);
+  disable(
+    $("#stop"),
+    stopRequested ||
+      state.runner.stopping ||
+      (!canStop(state) && !modeStarting),
+  );
   document
     .querySelectorAll<HTMLElement>(
       "[data-hue-controls] input, [data-hue-controls] button, [data-hue-controls] select",
@@ -226,12 +234,28 @@ function update() {
     : state.feed.connected
       ? "Flux F1 connecté"
       : "Flux F1 hors ligne";
-  $("#connection").className = "badge " + (state.feed.connected ? "good" : "");
+  const status = modeStatus(
+    state,
+    serviceConnected,
+    stopRequested,
+    modeStarting,
+  );
+  $("#mode-status").textContent = status.label;
+  $("#mode-status").className = "badge " + status.tone;
+  document
+    .querySelectorAll<HTMLElement>("[data-mode-title]")
+    .forEach((el) => (el.textContent = status.label));
+  document
+    .querySelectorAll<HTMLElement>("[data-mode-detail]")
+    .forEach((el) => (el.textContent = status.detail));
+  const control = document.querySelector<HTMLElement>(".live-control");
+  if (control) control.dataset.tone = status.tone;
   updateControls();
   $("#stop").textContent =
     stopRequested || state.runner.stopping
       ? "Arrêt en cours…"
-      : state.runner.cleanupPending
+      : state.runner.cleanupPending ||
+          (state.recovery?.pending && !state.runner.running)
         ? "Réessayer l’arrêt"
         : "Stop";
   $("#version").textContent = state.version;
@@ -301,20 +325,6 @@ function update() {
       : "Ambiance initiale",
     offset: `${state.settings.offsetSeconds.toLocaleString("fr-BE")} s`,
     targets: `${state.settings.lightIds.length} lampe${state.settings.lightIds.length !== 1 ? "s" : ""}`,
-    mode: state.initializing
-      ? "Préparation des lampes…"
-      : state.runner.stopping
-        ? "Arrêt en cours"
-        : state.runner.cleanupPending
-          ? "Arrêt à réessayer"
-          : state.runner.running
-            ? ({
-                live: "Direct activé",
-                preview: "Aperçu",
-                sequence: "Séquence",
-                replay: "Replay",
-              }[state.runner.mode ?? ""] ?? "Actif")
-            : "À l’arrêt",
     bridge: state.hue.linked
       ? `${state.hue.name ?? "Pont lié"} · ${state.settings.lightIds.length} lampe${state.settings.lightIds.length !== 1 ? "s" : ""} choisie${state.settings.lightIds.length !== 1 ? "s" : ""}`
       : "Pont à lier",
@@ -400,6 +410,16 @@ async function boot() {
       .catch(() => {});
   };
 }
+async function startMode(path: string, body?: unknown) {
+  modeStarting = true;
+  update();
+  try {
+    await api(path, "POST", body);
+  } finally {
+    modeStarting = false;
+    update();
+  }
+}
 async function action(name: string, target: HTMLElement) {
   if (name === "reload-interface") {
     location.reload();
@@ -438,7 +458,7 @@ async function action(name: string, target: HTMLElement) {
       await refresh();
     }
     return;
-  } else if (name === "start") await api("/live/start", "POST");
+  } else if (name === "start") await startMode("/live/start");
   else if (name === "calibration" || name === "journal") {
     tab = name === "calibration" ? "calibration" : "journal";
     navigate("live");
@@ -448,8 +468,8 @@ async function action(name: string, target: HTMLElement) {
     await showAuth();
     return;
   } else if (name.startsWith("preview:"))
-    await api("/test/preview", "POST", { flag: name.split(":")[1] });
-  else if (name === "sequence") await api("/test/sequence", "POST");
+    await startMode("/test/preview", { flag: name.split(":")[1] });
+  else if (name === "sequence") await startMode("/test/sequence");
   else if (name.startsWith("arm:"))
     await api("/calibration/arm", "POST", { mode: name.split(":")[1] });
   else if (name === "seen") {
@@ -713,7 +733,7 @@ document.addEventListener("submit", (event) => {
       toast("Sélection enregistrée.");
     } else if (kind === "replay") {
       const [type, ...key] = String(data.get("scenario")).split(":");
-      await api("/replay/start", "POST", {
+      await startMode("/replay/start", {
         kind: type,
         id: key.join(":"),
         speed: Number(data.get("speed")),

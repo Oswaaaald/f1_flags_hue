@@ -28,6 +28,7 @@ Tes réglages et ta liaison Hue sont conservés lors d’une mise à jour.
 ## Ce qui change
 
 - Activer le direct attend les nouveaux drapeaux : l’ancien état de piste et les snapshots de reconnexion ne sont plus rejoués après un nouveau délai TV.
+- « Direct actif » ou « Direct inactif » est visible en permanence. Stop est grisé au repos et reste disponible pendant le démarrage, les effets et leur récupération.
 - Correctif d’allumage : une lampe éteinte reçoit directement la couleur du drapeau, sans fondu depuis sa couleur mémorisée. L’allumage reste groupé et les changements de drapeau suivants respectent le fondu configuré.
 - Stop et fermeture de l’application réactifs, restauration des lampes confirmée et parcours de récupération en cas de pont ou lampe indisponible.
 - Direct automatique qui reprend quand le réseau revient, fraîcheur des données F1 visible, journal et diagnostic plus précis.

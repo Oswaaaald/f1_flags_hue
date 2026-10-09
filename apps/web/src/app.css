@@ -214,11 +214,11 @@
     min-width: 0;
   }
   .topbar {
-    height: 76px;
+    min-height: 76px;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 0 40px;
+    padding: 10px 40px;
     border-bottom: 1px solid var(--line);
     position: sticky;
     top: 0;
@@ -230,6 +230,59 @@
     display: flex;
     align-items: center;
     gap: 18px;
+  }
+  .mode-summary {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 3px;
+    min-width: 0;
+  }
+  .mode-summary #connection {
+    font-size: 10px;
+    color: var(--muted);
+  }
+  #mode-status {
+    font-size: 12px;
+    font-weight: 650;
+  }
+  #mode-status::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    flex-shrink: 0;
+  }
+  .live-control {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+    padding: 20px 24px;
+    margin-bottom: 26px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--surface);
+  }
+  .live-control h2 {
+    font-size: 20px;
+  }
+  .live-control p {
+    font-size: 12px;
+    margin-top: 4px;
+  }
+  .live-control[data-tone="good"] {
+    background: var(--accent-soft);
+  }
+  .live-control[data-tone="good"] h2 {
+    color: var(--accent);
+  }
+  .live-control[data-tone="bad"] {
+    background: var(--red-soft);
+  }
+  .live-control[data-tone="bad"] h2 {
+    color: var(--red);
   }
   main {
     max-width: 1170px;
@@ -831,11 +884,16 @@
       margin-left: 0;
     }
     .topbar {
-      height: 62px;
-      padding: 0 20px;
+      min-height: 70px;
+      padding: 8px 20px;
     }
     .topbar-actions {
       gap: 8px;
+    }
+    .live-control {
+      align-items: stretch;
+      flex-direction: column;
+      padding: 20px;
     }
     .badge {
       font-size: 10px;

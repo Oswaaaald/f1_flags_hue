@@ -5,6 +5,7 @@
 - Activer le direct attend désormais les nouveaux événements F1. Le dernier drapeau mémorisé n’est plus recréé avec une nouvelle heure de réception et un nouveau délai TV.
 - Les états initiaux reçus à la connexion ou à la reconnexion alimentent l’affichage sans déclencher un effet ni l’arrêt automatique au damier.
 - Les nouveaux drapeaux conservent leur délai TV calculé depuis leur réception réelle. L’interface explique l’attente du prochain événement.
+- Le statut principal indique explicitement « Direct actif », « Direct inactif » ou le test/replay en cours ; la connexion F1 devient une information secondaire. Stop est désactivé au repos et reste disponible pendant un démarrage ou une récupération.
 
 ## 2.0.0-preview.15 — couleur au premier allumage
 

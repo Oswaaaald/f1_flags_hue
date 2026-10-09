@@ -41,13 +41,13 @@
             >
               Déconnexion
             </button>
-            <span id="connection" class="badge">Connexion…</span
-            ><button
-              id="stop"
-              class="button danger"
-              data-action="stop"
-              disabled
-            >
+            <div class="mode-summary">
+              <strong id="mode-status" class="badge" role="status"
+                >Vérification…</strong
+              >
+              <span id="connection">Connexion au flux…</span>
+            </div>
+            <button id="stop" class="button danger" data-action="stop" disabled>
               <span aria-hidden="true">■</span> Stop
             </button>
           </div>
