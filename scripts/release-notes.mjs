@@ -27,6 +27,7 @@ Tes réglages et ta liaison Hue sont conservés lors d’une mise à jour.
 
 ## Ce qui change
 
+- Correctif d’allumage : une lampe éteinte reçoit directement la couleur du drapeau, sans fondu depuis sa couleur mémorisée. L’allumage reste groupé et les changements de drapeau suivants respectent le fondu configuré.
 - Stop et fermeture de l’application réactifs, restauration des lampes confirmée et parcours de récupération en cas de pont ou lampe indisponible.
 - Direct automatique qui reprend quand le réseau revient, fraîcheur des données F1 visible, journal et diagnostic plus précis.
 - Sélection Hue cohérente, brouillons conservés, conflits entre onglets détectés, luminosité en pourcentage et navigation mobile/clavier améliorée.

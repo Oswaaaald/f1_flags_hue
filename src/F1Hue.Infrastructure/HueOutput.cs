@@ -16,6 +16,7 @@ public sealed class HueOutput(HueClient client, Store store, TimeProvider? time 
     private HueGroupTarget? _preparedTarget;
     private readonly HueSnapshot _snapshot = new(client, store, time);
     private bool _restored;
+    private bool _effectApplied;
     private bool _partialRestore;
     private string?[] _legacyLights = [];
     public async Task PrepareAsync(AppSettings settings, CancellationToken ct)
@@ -27,6 +28,7 @@ public sealed class HueOutput(HueClient client, Store store, TimeProvider? time 
         _solidTarget = null;
         _preparedTarget = null;
         _restored = false;
+        _effectApplied = false;
         // Starting a live connection does not own the current ambiance yet.
         // The user may change it in Hue while waiting for the first flag.
         var lights = await client.RequestAsync(HttpMethod.Get, "/light", null, ct);
@@ -46,6 +48,7 @@ public sealed class HueOutput(HueClient client, Store store, TimeProvider? time 
         _legacyLights = [];
         _solidTarget = null;
         _restored = false;
+        _effectApplied = false;
         var began = (time ?? TimeProvider.System).GetTimestamp();
         timeline?.Add("capture_started");
         var resources = await client.RequestAsync(HttpMethod.Get, settings.LightIds.Length > 1 ? "" : "/light", null, ct);
@@ -149,8 +152,15 @@ public sealed class HueOutput(HueClient client, Store store, TimeProvider? time 
             _pulse = new HueNativePulse(client, store, e => Failed?.Invoke(e), time);
             _pulse.UsePreparedTarget(_preparedTarget ?? _solidTarget);
             await _pulse.StartAsync(_legacyLights.Select(HueNativePulse.LightId).ToArray(), flag, effect, settings, ct);
+            _effectApplied = true;
             return;
         }
+        // A fade on wake-up interpolates from the color retained while off.
+        // Apply color, brightness and power together without that initial fade.
+        // One group command keeps mixed on/off selections synchronized; later
+        // flag changes can use the configured fade once activation succeeds.
+        var transition = !_effectApplied && _baseline.Values.Any(state => !state.GetProperty("on").GetProperty("on").GetBoolean())
+            ? 0 : settings.TransitionSeconds;
         if (settings.LightIds.Length > 1)
         {
             _solidTarget ??= _preparedTarget ?? await HueGroupTarget.ResolveAsync(client, _legacyLights.Select(HueGroupTarget.LightId).ToArray(), ct, store);
@@ -159,10 +169,11 @@ public sealed class HueOutput(HueClient client, Store store, TimeProvider? time 
                 on = true,
                 bri = settings.Brightness,
                 xy = new[] { effect.X, effect.Y },
-                transitiontime = (int)Math.Round(settings.TransitionSeconds * 10),
+                transitiontime = (int)Math.Round(transition * 10),
                 effect = "none",
                 alert = "none"
             }, ct);
+            _effectApplied = true;
             return;
         }
         var state = new Dictionary<string, object>
@@ -170,9 +181,10 @@ public sealed class HueOutput(HueClient client, Store store, TimeProvider? time 
             ["on"] = new { on = true },
             ["dimming"] = new { brightness = settings.Brightness / 254.0 * 100 },
             ["color"] = new { xy = new { x = effect.X, y = effect.Y } },
-            ["dynamics"] = new { duration = (int)(settings.TransitionSeconds * 1000) },
+            ["dynamics"] = new { duration = (int)(transition * 1000) },
         };
         await client.PutLightAsync(settings.LightIds.Single(), state, ct);
+        _effectApplied = true;
     }
     public async Task EndAnimationAsync(CancellationToken ct)
     {

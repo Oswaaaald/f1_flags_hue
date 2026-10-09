@@ -1,5 +1,11 @@
 # Historique
 
+## 2.0.0-preview.15 — couleur au premier allumage
+
+- Lorsqu’une lampe sélectionnée est éteinte, le premier drapeau fixe applique simultanément allumage, luminosité et couleur avec une transition à zéro, pour éviter le fondu depuis sa couleur mémorisée.
+- Les sélections de plusieurs lampes, y compris mixtes allumées/éteintes, restent commandées en groupe. Les drapeaux suivants retrouvent la transition configurée.
+- La restauration conserve l’état initial éteint ; le prochain test applique à nouveau l’allumage direct. Les pulsations natives gardent leur commande initiale sans transition.
+
 ## 2.0.0-preview.14 — correctifs de l’audit
 
 ### Fonctionnement

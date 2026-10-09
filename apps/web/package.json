@@ -1,6 +1,6 @@
 {
   "name": "f1-hue-web",
-  "version": "2.0.0-preview.14",
+  "version": "2.0.0-preview.15",
   "private": true,
   "type": "module",
   "scripts": {

@@ -113,18 +113,69 @@ internal static class GroupColorTests
             await output.RestoreAsync(CancellationToken.None);
         }
         finally { Directory.Delete(directory, true); }
+        await DarkStartAsync(check);
+    }
+    private static async Task DarkStartAsync(Action<bool, string> check)
+    {
+        foreach (var selection in new[] { "single", "all-off", "mixed" })
+            foreach (var flag in new[] { RaceFlag.GREEN, RaceFlag.YELLOW, RaceFlag.RED, RaceFlag.SC_ENDING, RaceFlag.VSC_ENDING, RaceFlag.SC })
+            {
+                var directory = Path.Combine(Path.GetTempPath(), "f1hue-wake-" + Guid.NewGuid());
+                try
+                {
+                    using var store = new Store(directory);
+                    var clock = new FastClock();
+                    var bridge = new Bridge();
+                    bridge.Off.Add(A);
+                    if (selection == "all-off")
+                        bridge.Off.Add(B);
+                    using var client = bridge.Client(clock);
+                    var output = new HueOutput(client, store, clock);
+                    var settings = new AppSettings { LightIds = selection == "single" ? [A] : [A, B], Brightness = 180, TransitionSeconds = .7 };
+                    await output.CaptureAsync(settings, CancellationToken.None);
+                    bridge.Calls.Clear();
+                    await output.ApplyAsync(flag, settings.Effects[flag], settings, CancellationToken.None);
+                    var write = bridge.Calls.Single(c => c.Method == HttpMethod.Put);
+                    var body = JsonSerializer.Deserialize<JsonElement>(write.Body);
+                    var native = flag == RaceFlag.SC || selection != "single";
+                    var xy = native ? body.GetProperty("xy") : body.GetProperty("color").GetProperty("xy");
+                    var transition = native ? body.GetProperty("transitiontime").GetInt32() : body.GetProperty("dynamics").GetProperty("duration").GetInt32();
+                    var on = native ? body.GetProperty("on").GetBoolean() : body.GetProperty("on").GetProperty("on").GetBoolean();
+                    var x = native ? xy[0].GetDouble() : xy.GetProperty("x").GetDouble();
+                    check(on && transition == 0 && x == settings.Effects[flag].X
+                        && (selection == "single" || write.Path == "groups/7/action")
+                        && !store.Get<Dictionary<string, JsonElement>>("pending_restore")![A].GetProperty("on").GetProperty("on").GetBoolean(),
+                        $"{selection}: {flag} wakes directly in its color with one command and preserves the original off state");
+                    await output.EndAnimationAsync(CancellationToken.None);
+                    bridge.Calls.Clear();
+                    await output.ApplyAsync(RaceFlag.GREEN, settings.Effects[RaceFlag.GREEN], settings, CancellationToken.None);
+                    body = JsonSerializer.Deserialize<JsonElement>(bridge.Calls.Single(c => c.Method == HttpMethod.Put).Body);
+                    transition = selection == "single" ? body.GetProperty("dynamics").GetProperty("duration").GetInt32() : body.GetProperty("transitiontime").GetInt32();
+                    check(transition == (selection == "single" ? 700 : 7), $"{selection}: the configured fade returns after {flag} successfully wakes the lamps");
+                    await output.RestoreAsync(CancellationToken.None);
+                    bridge.Calls.Clear();
+                    await output.ApplyAsync(RaceFlag.GREEN, settings.Effects[RaceFlag.GREEN], settings, CancellationToken.None);
+                    body = JsonSerializer.Deserialize<JsonElement>(bridge.Calls.Single(c => c.Method == HttpMethod.Put).Body);
+                    transition = selection == "single" ? body.GetProperty("dynamics").GetProperty("duration").GetInt32() : body.GetProperty("transitiontime").GetInt32();
+                    check(transition == 0, $"{selection}: restoring the off baseline rearms direct wake-up for the next test");
+                    await output.RestoreAsync(CancellationToken.None);
+                    await output.ReleaseAsync(CancellationToken.None);
+                }
+                finally { Directory.Delete(directory, true); }
+            }
     }
     private sealed class Bridge
     {
         public readonly List<(HttpMethod Method, string Path, string Body)> Calls = [];
         public bool HasExactGroup = true, GroupChanged, RejectColor, OmitLegacy;
+        public readonly HashSet<string> Off = [];
         private readonly SceneBridge Scenes = new();
-        public HueClient Client() => new(new MemoryVault(), (_, pin, _) =>
+        public HueClient Client(TimeProvider? time = null) => new(new MemoryVault(), (_, pin, _) =>
         {
             if (pin != "test-pin")
                 throw new Exception("Grouped colors must retain certificate pinning");
             return new HttpClient(new Handler(Reply)) { BaseAddress = new Uri("https://192.168.1.20/") };
-        });
+        }, time);
         private async Task<HttpResponseMessage> Reply(HttpRequestMessage request, CancellationToken ct)
         {
             var path = request.RequestUri!.AbsolutePath.TrimStart('/').Replace("api/private-test-key/", "", StringComparison.Ordinal);
@@ -167,7 +218,7 @@ internal static class GroupColorTests
             id_v1 = OmitLegacy ? null : "/lights/" + legacy,
             on = new
             {
-                on = true
+                on = !Off.Contains(id)
             },
             dimming = new
             {
@@ -186,5 +237,13 @@ internal static class GroupColorTests
     private sealed class Handler(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> send) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct) => send(request, ct);
+    }
+    private sealed class FastClock : TimeProvider
+    {
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+            // These tests advance short settling/budget delays only. Native
+            // renewal is covered separately and stays paused until Stop here.
+            => System.CreateTimer(callback, state, dueTime >= TimeSpan.FromSeconds(2) ? Timeout.InfiniteTimeSpan : dueTime / 100,
+                period == Timeout.InfiniteTimeSpan ? period : period / 100);
     }
 }
