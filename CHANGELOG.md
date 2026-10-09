@@ -1,5 +1,11 @@
 # Historique
 
+## 2.0.0-preview.16 — direct sans rejeu d’un ancien drapeau
+
+- Activer le direct attend désormais les nouveaux événements F1. Le dernier drapeau mémorisé n’est plus recréé avec une nouvelle heure de réception et un nouveau délai TV.
+- Les états initiaux reçus à la connexion ou à la reconnexion alimentent l’affichage sans déclencher un effet ni l’arrêt automatique au damier.
+- Les nouveaux drapeaux conservent leur délai TV calculé depuis leur réception réelle. L’interface explique l’attente du prochain événement.
+
 ## 2.0.0-preview.15 — couleur au premier allumage
 
 - Lorsqu’une lampe sélectionnée est éteinte, le premier drapeau fixe applique simultanément allumage, luminosité et couleur avec une transition à zéro, pour éviter le fondu depuis sa couleur mémorisée.

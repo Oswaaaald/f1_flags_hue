@@ -96,31 +96,47 @@ try
         await Until(() => !runner.State.Running);
         Check(output.Colors.Last() == RaceFlag.CHEQUERED, "Auto-stop waits until delayed chequered effect completes");
     }
-    store.Save(liveSettings with
-    {
-        OffsetSeconds = 0
-    });
-    var currentSource = new FakeFeed { State = new(Connected: true, SessionKey: "test", SessionStatus: "Started", LastFlag: "SC") };
-    var currentOutput = new FakeOutput();
-    await using (var resumed = new Runner(store, currentSource, currentOutput))
-    {
-        await resumed.StartAsync("live");
-        await Until(() => currentOutput.Colors.Contains(RaceFlag.SC));
-        Check(true, "Starting during a session synchronizes the current flag");
-        await resumed.StopAsync();
-    }
-    currentSource.State = currentSource.State with
-    {
-        SessionStatus = "Ends"
-    };
-    currentOutput = new FakeOutput();
-    await using (var ended = new Runner(store, currentSource, currentOutput))
-    {
-        await ended.StartAsync("live");
-        await Task.Delay(20);
-        Check(currentOutput.Colors.Count == 0, "Starting after a finished session does not replay its final flag");
-        await ended.StopAsync();
-    }
+    foreach (var offset in new[] { 0, 47.9 })
+        foreach (var (status, cachedFlag) in new[] { ("Started", "GREEN"), ("Started", "SC"), ("Aborted", "RED"), ("Ends", "CHEQUERED") })
+        {
+            store.Save(liveSettings with
+            {
+                OffsetSeconds = offset
+            });
+            var currentSource = new FakeFeed { State = new(Connected: true, SessionKey: "test", SessionStatus: status, LastFlag: cachedFlag, LastDataAt: DateTimeOffset.UtcNow.AddHours(-1)) };
+            var currentOutput = new FakeOutput();
+            await using var resumed = new Runner(store, currentSource, currentOutput);
+            await resumed.StartAsync("live");
+            Check(currentOutput.Colors.IsEmpty && resumed.State.QueuedEvents == 0 && resumed.State.NextEffectAt is null && resumed.State.LastFlag is null,
+                $"Starting with {offset}s offset never schedules the cached {cachedFlag} from {status}");
+            foreach (var snapshotFlag in new[] { "GREEN", "RED", "SC", "CHEQUERED" })
+                currentSource.Send("flag", snapshotFlag, initial: true);
+            Check(currentOutput.Colors.IsEmpty && resumed.State.QueuedEvents == 0 && resumed.State.NextEffectAt is null,
+                $"Connection snapshots do not queue lamp commands or auto-stop with {offset}s offset after {cachedFlag}");
+            // The real-event delay is exercised above; use zero here to drain
+            // the queue and prove that ignored snapshots cannot block or replay.
+            store.Save(store.Read() with
+            {
+                OffsetSeconds = 0
+            });
+            currentSource.Send("flag", "RED");
+            await Until(() => currentOutput.Colors.Contains(RaceFlag.RED));
+            currentSource.Send("flag", "SC", initial: true);
+            currentSource.Send("flag", "GREEN");
+            await Until(() => currentOutput.Colors.Contains(RaceFlag.GREEN));
+            Check(currentOutput.Colors.SequenceEqual([RaceFlag.RED, RaceFlag.GREEN]) && resumed.State.Running,
+                $"Real flags still play after {cachedFlag}; a reconnect snapshot cannot insert a stale SC");
+            currentSource.Send("flag", "RED", initial: true);
+            currentSource.Send("flag", "GREEN");
+            await Until(() => currentOutput.Colors.Count == 3);
+            Check(currentOutput.Colors.SequenceEqual([RaceFlag.RED, RaceFlag.GREEN, RaceFlag.GREEN]),
+                $"A new green after a red reconnect snapshot is not confused with the previous green after {cachedFlag}");
+            await resumed.StopAsync();
+            await resumed.StartAsync("live");
+            Check(currentOutput.Colors.Count == 3 && resumed.State.QueuedEvents == 0 && resumed.State.NextEffectAt is null,
+                $"Stop then Start never replays a cached {cachedFlag}");
+            await resumed.StopAsync();
+        }
     var effectOutput = new FakeOutput();
     await using (var engine = new EffectEngine(effectOutput))
     {

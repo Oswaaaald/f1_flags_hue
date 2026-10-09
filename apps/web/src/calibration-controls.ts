@@ -21,7 +21,9 @@ export function updateFreshness(state: State, serverDelta: number) {
   if (queue)
     queue.textContent = state.runner.nextEffectAt
       ? `Prochain effet dans ${Math.max(0, (Date.parse(state.runner.nextEffectAt) - Date.now() - serverDelta) / 1000).toFixed(1)} s · ${state.runner.queuedEvents} autre(s) événement(s) en attente.`
-      : "Aucun événement en attente de l’offset TV.";
+      : state.runner.running && state.runner.mode === "live"
+        ? "En attente d’un nouveau drapeau F1. Les drapeaux antérieurs à l’activation ne sont pas rejoués."
+        : "Aucun événement en attente de l’offset TV.";
 }
 export function updateCalibration(
   state: State,

@@ -7,6 +7,6 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <AnalysisLevel>latest</AnalysisLevel>
-    <Version>2.0.0-preview.15</Version>
+    <Version>2.0.0-preview.16</Version>
   </PropertyGroup>
 </Project>

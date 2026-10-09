@@ -192,7 +192,9 @@ public sealed class Runner(ISettingsStore store, ILiveFeed feed, IEffectOutput o
         var enqueueGate = new object();
         void Receive(RaceEvent item)
         {
-            if (item.Kind != "flag")
+            // Connection snapshots describe existing state, not a new flag.
+            // Replaying one would invent a fresh TV deadline for an old event.
+            if (item.Kind != "flag" || item.Initial)
                 return;
             lock (enqueueGate)
             {
@@ -205,23 +207,17 @@ public sealed class Runner(ISettingsStore store, ILiveFeed feed, IEffectOutput o
         feed.Event += Receive;
         try
         {
-            // Starting mid-session also synchronizes the current flag. Finished snapshots never play.
-            lock (enqueueGate)
-            {
-                var current = feed.State;
-                if (current.Connected && (current.SessionStatus == "Started" || current.SessionStatus == "Aborted" && current.LastFlag == "RED") && current.LastFlag is not null)
-                    Receive(new("flag", current.LastFlag, current.SessionKey, current.SessionName, current.SessionType, _time.GetUtcNow(), _time.GetTimestamp(), Initial: true));
-            }
-            RaceFlag? lastPlayed = null;
-            string? lastSession = null;
+            // Start with an empty queue. FeedState.LastFlag has no event age
+            // and must never be converted into a newly received event.
             await foreach (var queued in queue.Reader.ReadAllAsync(ct))
             {
                 lock (enqueueGate)
                     Update(s => s with { QueuedEvents = Math.Max(0, s.QueuedEvents - 1) });
                 if (!Enum.TryParse<RaceFlag>(queued.Event.Value, out var flag))
                     continue;
-                if (flag == lastPlayed && queued.Event.SessionKey == lastSession)
-                    continue;
+                // The parser deduplicates F1 state updates. A new event after
+                // a reconnect can legitimately repeat the last played color
+                // because the intervening snapshot was deliberately not played.
                 var wait = queued.Offset - _time.GetElapsedTime(queued.Event.ReceivedTicks).TotalSeconds;
                 Update(s => s with { NextEffectAt = _time.GetUtcNow().AddSeconds(Math.Max(0, wait)) });
                 timeline?.Add("scheduled", queued.Event.EventId, flag.ToString(), detail: queued.Offset.ToString(System.Globalization.CultureInfo.InvariantCulture) + " s");
@@ -229,8 +225,6 @@ public sealed class Runner(ISettingsStore store, ILiveFeed feed, IEffectOutput o
                     await Task.Delay(TimeSpan.FromSeconds(wait), _time, ct);
                 await Play(flag, targets, false, ct, queued.Event.EventId);
                 Update(s => s with { NextEffectAt = null });
-                lastPlayed = flag;
-                lastSession = queued.Event.SessionKey;
                 if (flag == RaceFlag.CHEQUERED && store.Read().ExitOnChequered)
                 {
                     await _engine.Completion.WaitAsync(ct);

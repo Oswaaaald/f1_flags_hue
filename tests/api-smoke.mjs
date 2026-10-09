@@ -98,9 +98,21 @@ try{
   await req('/api/stop','POST');
  }
  await req('/api/test/sequence','POST');await req('/api/stop','POST');
- await req('/api/live/start','POST');await req('/api/settings','PATCH',{effects:{GREEN:{enabled:false}}});
  const send=(topic,payload)=>req('/api/simulation/event','POST',{topic,payload});
  await send('SessionInfo',{Key:9001,Name:'Course de test',Type:'Race'});await send('SessionStatus',{Status:'Started'});
+ await send('TrackStatus',{Status:'1'});
+ await req('/api/settings','PATCH',{offsetSeconds:47.9});
+ await req('/api/live/start','POST');
+ state=(await req('/api/state')).body;
+ check(state.feed.lastFlag==='GREEN'&&state.runner.running&&state.runner.lastFlag===null&&state.runner.nextEffectAt===null&&state.runner.queuedEvents===0,'Activating live with a TV offset does not replay the already received green flag');
+ await send('TrackStatus',{Status:'5'});
+ state=(await req('/api/state')).body;
+ const remaining=(Date.parse(state.runner.nextEffectAt)-Date.parse(state.serverUtc))/1000;
+ check(state.runner.activeEffect===null&&remaining>45&&remaining<=47.9,'A genuinely new live flag keeps its 47.9 second delay');
+ await req('/api/stop','POST');await req('/api/live/start','POST');
+ state=(await req('/api/state')).body;
+ check(state.feed.lastFlag==='RED'&&state.runner.lastFlag===null&&state.runner.nextEffectAt===null&&state.runner.queuedEvents===0,'Stop and restart discard the pending flag instead of assigning it a new TV deadline');
+ await req('/api/settings','PATCH',{offsetSeconds:0,effects:{GREEN:{enabled:false}}});
  await send('TrackStatus',{Status:'1'});await send('TrackStatus',{Status:'5'});
  state=(await req('/api/state')).body;check(state.runner.lastFlag==='RED','Live mode receives decoded events');
  await req('/api/calibration/arm','POST',{mode:'lap'});await send('LapCount',{CurrentLap:2,TotalLaps:53});await req('/api/calibration/seen','POST');
