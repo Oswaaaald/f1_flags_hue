@@ -14,7 +14,7 @@
     "@axe-core/playwright": "4.13.0",
     "@playwright/test": "1.64.0",
     "esbuild": "0.25.12",
-    "prettier": "3.9.9",
+    "prettier": "3.9.10",
     "typescript": "5.9.3"
   }
 }
